@@ -45,6 +45,7 @@ install.packages(c("MASS", "parallel", "ggplot2", "gridExtra"))
 
 │
 ├── Network Recovery Algorithm
+
 │   ├── f_function()              # Primary objective function
 
 │   ├── ff_function()             # Threshold optimization function
@@ -59,6 +60,7 @@ install.packages(c("MASS", "parallel", "ggplot2", "gridExtra"))
 │
 
 ├── Research Studies
+
 │   ├── conduct_network_structure_study()    # Impact of network topology
 
 │   ├── conduct_sample_size_study()          # Effect of node count
@@ -69,6 +71,7 @@ install.packages(c("MASS", "parallel", "ggplot2", "gridExtra"))
 
 │
 ├── Visualization & Analysis
+
 │   ├── analyze_and_visualize_results()      # Multi-figure analysis
 
 │   ├── visualize_fixed_edges_vary_nodes()   # Fixed-edge study plots
@@ -77,6 +80,7 @@ install.packages(c("MASS", "parallel", "ggplot2", "gridExtra"))
 
 │
 └── Main Execution Functions
+
     ├── main_network_structure_study()       # Primary study runner
     
     ├── main_sample_size_study()             # Sample size analysis
