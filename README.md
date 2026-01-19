@@ -31,9 +31,11 @@ a sophisticated network recovery algorithm, and comprehensive evaluation metrics
 
 (3) Lambda Tuning: Automatic optimization of regularization parameter across multiple values
 
+
 🚀 3. Required R Packages
 
 install.packages(c("MASS", "parallel", "ggplot2", "gridExtra"))
+
 
 🚀 4. System Requirements
 
@@ -42,6 +44,7 @@ install.packages(c("MASS", "parallel", "ggplot2", "gridExtra"))
 (2) Multi-core processor for parallel execution
 
 (3) Sufficient memory (≥ 8GB recommended for larger networks)
+
 
 📁 5. Project Structure
 
@@ -127,6 +130,7 @@ fixed_edges_results <- main_fixed_edges_vary_nodes_study()
 
 fixed_nodes_results <- main_fixed_nodes_vary_edges_study()
 
+
 📊 7. Primary Outputs
 
 (1) Statistical Summaries: Average recovery rates, standard deviations, standard errors
@@ -177,6 +181,7 @@ Holds edge count constant (~50 edges) while varying node count (15-40 nodes) to 
 
 Maintains constant node count (30 nodes) while varying edge density (0.1-0.5) to study density impact.
 
+
 🛠️ 10. Technical Details
 
 - Algorithm Optimizations
@@ -207,6 +212,7 @@ Maintains constant node count (30 nodes) while varying edge density (0.1-0.5) to
 
 (3) Trade-off analysis between TPR and TNR
 
+
 ⚡ 11. Performance Considerations
 
 - Computation Time
@@ -224,6 +230,7 @@ Maintains constant node count (30 nodes) while varying edge density (0.1-0.5) to
 (1) 20-node networks require ~100MB RAM
 
 (2) 40-node networks require ~400MB RAM
+
 
 📈 12. Visualization Examples
 
@@ -266,6 +273,7 @@ Maintains constant node count (30 nodes) while varying edge density (0.1-0.5) to
 
 (3) Incorporate additional statistical tests as needed
 
+
 📚 14. Citation & References
 
 If using this code for research, please cite relevant methodologies from:
@@ -275,6 +283,7 @@ If using this code for research, please cite relevant methodologies from:
 (2) Classic network models: Erdős-Rényi, Watts-Strogatz, Barabási-Albert
 
 (3) Network recovery and spatial econometrics literature
+
 
 🤝 15. Contributing
 
@@ -292,6 +301,7 @@ Contributions are welcome! Please:
 📄 16. License
 
 This project is provided for academic and research purposes. Please contact the authors for specific licensing inquiries.
+
 
 ⚠️ 17. Known Issues & Limitations
 
