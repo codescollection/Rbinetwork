@@ -181,7 +181,7 @@ Maintains constant node count (30 nodes) while varying edge density (0.1-0.5) to
 (4) Network Features Computed
 
 - Density, average degree, degree variance
-- 
+  
 (1) Clustering coefficient, degree assortativity
 
 (2) Network diameter, number of components
@@ -191,7 +191,7 @@ Maintains constant node count (30 nodes) while varying edge density (0.1-0.5) to
 (4) Statistical Analysis
 
 - Mean comparisons with standard errors
-- 
+  
 (1) Correlation matrices between features and metrics
 
 (2) Multiple regression modeling
