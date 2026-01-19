@@ -90,8 +90,8 @@ install.packages(c("MASS", "parallel", "ggplot2", "gridExtra"))
 │   ├── visualize_fixed_edges_vary_nodes()   # Fixed-edge study plots
 
 │   └── visualize_fixed_nodes_vary_edges()   # Fixed-node study plots
-
 │
+
 └── Main Execution Functions
 
     ├── main_network_structure_study()       # Primary study runner
@@ -300,6 +300,8 @@ Memory Usage: Dense networks require significant memory
 Convergence: Optimization may occasionally fail to converge; results include error handling
 
 Determinism: Random network generation requires set.seed() for reproducibility
+
+
 
 
 (For questions or issues, please open an issue on GitHub or contact the maintainer.)
