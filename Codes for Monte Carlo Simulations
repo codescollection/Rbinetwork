@@ -1,0 +1,2234 @@
+# ============================================
+# Studying the Impact of Different Network Structures on Network Recovery Rate
+# ============================================
+
+# Load necessary packages
+library(MASS)
+library(parallel)
+library(ggplot2)
+library(gridExtra)
+
+# ============================================
+# 1. Network Structure Generation Functions
+# ============================================
+
+# 1.1 Random Network (Erdős-Rényi)
+generate_ER_network <- function(n, p) {
+  # Generate random network
+  theta <- rbinom(n*(n-1)/2, 1, p)
+  G <- matrix(0, n, n)
+  G[upper.tri(G)] <- theta
+  G <- G + t(G)
+  return(G)
+}
+
+# 1.2 Small World Network (Watts-Strogatz)
+generate_WS_network <- function(n, k, p_rewire) {
+  # First create a regular network
+  G <- matrix(0, n, n)
+  
+  # Each node connects to its k nearest neighbors
+  for (i in 1:n) {
+    for (j in 1:k) {
+      neighbor <- (i + j) %% n
+      if (neighbor == 0) neighbor <- n
+      G[i, neighbor] <- 1
+      G[neighbor, i] <- 1
+    }
+  }
+  
+  # Rewire edges with probability p_rewire
+  edges <- which(G == 1 & upper.tri(G), arr.ind = TRUE)
+  
+  for (i in 1:nrow(edges)) {
+    if (runif(1) < p_rewire) {
+      # Disconnect existing connection
+      G[edges[i,1], edges[i,2]] <- 0
+      G[edges[i,2], edges[i,1]] <- 0
+      
+      # Connect to a new node
+      possible_nodes <- setdiff(1:n, c(edges[i,1], which(G[edges[i,1],] == 1)))
+      if (length(possible_nodes) > 0) {
+        new_neighbor <- sample(possible_nodes, 1)
+        G[edges[i,1], new_neighbor] <- 1
+        G[new_neighbor, edges[i,1]] <- 1
+      }
+    }
+  }
+  
+  return(G)
+}
+
+# 1.3 Scale-Free Network (Barabási-Albert) - Fixed Version
+generate_BA_network <- function(n, m) {
+  # Initialize: start with a complete graph of m nodes
+  if (n <= m) {
+    # If n ≤ m, return a complete graph
+    G <- matrix(1, n, n)
+    diag(G) <- 0
+    return(G)
+  }
+  
+  G <- matrix(0, n, n)
+  
+  # Create initial complete graph
+  for (i in 1:m) {
+    for (j in 1:m) {
+      if (i != j) {
+        G[i, j] <- 1
+      }
+    }
+  }
+  
+  # Gradually add new nodes
+  for (i in (m+1):n) {
+    # Calculate degrees of existing nodes (only consider existing nodes)
+    existing_nodes <- 1:(i-1)
+    
+    # Ensure we have enough nodes to calculate degrees
+    if (length(existing_nodes) < 2) {
+      # If there's only one existing node, connect directly to it
+      G[i, 1] <- 1
+      G[1, i] <- 1
+      next
+    }
+    
+    # Extract submatrix of existing network
+    subG <- G[existing_nodes, existing_nodes]
+    
+    # Calculate degrees of existing nodes
+    degrees <- rowSums(subG)
+    
+    # Ensure sum of degrees is not zero
+    if (sum(degrees) == 0) {
+      # If all degrees are zero, randomly connect to m nodes
+      connected <- sample(existing_nodes, min(m, length(existing_nodes)), replace = FALSE)
+    } else {
+      # Select m nodes to connect based on degree distribution
+      probs <- degrees / sum(degrees)
+      
+      # Ensure probs has correct length and no NAs
+      if (length(probs) == length(existing_nodes) && all(!is.na(probs))) {
+        connected <- sample(existing_nodes, min(m, length(existing_nodes)), 
+                           replace = TRUE, prob = probs)
+      } else {
+        # If probability calculation has issues, connect randomly
+        connected <- sample(existing_nodes, min(m, length(existing_nodes)), replace = FALSE)
+      }
+    }
+    
+    # Add connections (ensure no duplicate connections)
+    connected <- unique(connected)
+    for (j in connected) {
+      G[i, j] <- 1
+      G[j, i] <- 1
+    }
+  }
+  
+  return(G)
+}
+
+# 1.4 Community Structure Network
+generate_community_network <- function(n, n_communities, p_within, p_between) {
+  # Assign nodes to communities
+  community_size <- floor(n / n_communities)
+  communities <- rep(1:n_communities, each = community_size)
+  
+  # If node count is not divisible, assign remaining nodes to first few communities
+  if (length(communities) < n) {
+    extra_nodes <- n - length(communities)
+    communities <- c(communities, rep(1:extra_nodes, each = 1))
+  }
+  
+  # Generate network
+  G <- matrix(0, n, n)
+  
+  for (i in 1:(n-1)) {
+    for (j in (i+1):n) {
+      if (communities[i] == communities[j]) {
+        # Intra-community connection
+        if (runif(1) < p_within) {
+          G[i, j] <- 1
+          G[j, i] <- 1
+        }
+      } else {
+        # Inter-community connection
+        if (runif(1) < p_between) {
+          G[i, j] <- 1
+          G[j, i] <- 1
+        }
+      }
+    }
+  }
+  
+  return(G)
+}
+
+# 1.5 Ring Network
+generate_ring_network <- function(n, k) {
+  G <- matrix(0, n, n)
+  
+  for (i in 1:n) {
+    for (j in 1:k) {
+      neighbor1 <- (i + j) %% n
+      neighbor2 <- (i - j) %% n
+      
+      if (neighbor1 == 0) neighbor1 <- n
+      if (neighbor2 == 0) neighbor2 <- n
+      
+      G[i, neighbor1] <- 1
+      G[i, neighbor2] <- 1
+      G[neighbor1, i] <- 1
+      G[neighbor2, i] <- 1
+    }
+  }
+  
+  return(G)
+}
+
+# 1.6 Star Network
+generate_star_network <- function(n) {
+  G <- matrix(0, n, n)
+  
+  # Central node connects to all other nodes
+  for (i in 2:n) {
+    G[1, i] <- 1
+    G[i, 1] <- 1
+  }
+  
+  return(G)
+}
+
+# 1.7 Complete Network
+generate_complete_network <- function(n) {
+  G <- matrix(1, n, n)
+  diag(G) <- 0
+  return(G)
+}
+
+# 1.8 Tree Network
+generate_tree_network <- function(n, k = 2) {
+  # k-ary tree network
+  G <- matrix(0, n, n)
+  
+  # Simple implementation: each node connects to parent and children
+  for (i in 2:n) {
+    parent <- floor((i-2)/k) + 1
+    if (parent <= n) {
+      G[i, parent] <- 1
+      G[parent, i] <- 1
+    }
+  }
+  
+  return(G)
+}
+
+# ============================================
+# 2. Network Recovery Algorithm (Optimized - Reduced Loop Count)
+# ============================================
+
+# Define objective function f
+f_function <- function(theta, lamda, n, y, X, z1) {
+  # Convert theta vector to matrix
+  G_mat <- matrix(0, n, n)
+  idx <- 1
+  for (i in 1:(n-1)) {
+    for (j in (i+1):n) {
+      G_mat[i, j] <- theta[idx]
+      G_mat[j, i] <- theta[idx]
+      idx <- idx + 1
+    }
+  }
+  
+  A_val <- G_mat %*% y
+  Gz1 <- G_mat %*% z1
+  Z <- cbind(Gz1, X)
+  A_hat_val <- Z %*% ginv(t(Z) %*% Z) %*% t(Z) %*% A_val
+  
+  delta_val <- as.numeric(as.numeric((1 - ginv(t(A_hat_val) %*% A_hat_val) %*% 
+                                         t(A_hat_val) %*% X %*% ginv(t(X) %*% X) %*% 
+                                         t(X) %*% A_val)^(-1)) *
+                             (ginv(t(A_hat_val) %*% A_hat_val) %*% t(y) %*% A_val - 
+                                ginv(t(A_hat_val) %*% A_hat_val) %*% 
+                                t(A_hat_val) %*% X %*% ginv(t(X) %*% X) %*% t(X) %*% y))
+  
+  beta_val <- ginv(t(X) %*% X) %*% (t(X) %*% y - as.numeric(delta_val) * t(X) %*% A_hat_val)
+  
+  f_val <- 0.5 * t(y - delta_val * G_mat %*% y - X %*% beta_val) %*% 
+    (y - delta_val * G_mat %*% y - X %*% beta_val) + 
+    lamda * sum(as.numeric(abs(G_mat)))
+  return(f_val)
+}
+
+# Define threshold function ff
+ff_function <- function(threshold, par_out, n, y, X, z1) {
+  n_params <- n*(n-1)/2
+  G_mat <- matrix(0, n, n)
+  idx <- 1
+  for (i in 1:(n-1)) {
+    for (j in (i+1):n) {
+      G_mat[i, j] <- ifelse(par_out[idx] <= threshold, 0, 1)
+      G_mat[j, i] <- G_mat[i, j]
+      idx <- idx + 1
+    }
+  }
+  
+  A_val <- G_mat %*% y
+  Gz1 <- G_mat %*% z1
+  Z <- cbind(Gz1, X)
+  A_hat_val <- Z %*% ginv(t(Z) %*% Z) %*% t(Z) %*% A_val
+  
+  delta_val <- as.numeric(as.numeric((1 - ginv(t(A_hat_val) %*% A_hat_val) %*% 
+                                         t(A_hat_val) %*% X %*% ginv(t(X) %*% X) %*% 
+                                         t(X) %*% A_val)^(-1)) *
+                             (ginv(t(A_hat_val) %*% A_hat_val) %*% t(y) %*% A_val - 
+                                ginv(t(A_hat_val) %*% A_hat_val) %*% 
+                                t(A_hat_val) %*% X %*% ginv(t(X) %*% X) %*% t(X) %*% y))
+  
+  beta_val <- ginv(t(X) %*% X) %*% (t(X) %*% y - as.numeric(delta_val) * t(X) %*% A_hat_val)
+  
+  ff_val <- t(y - delta_val * A_val - X %*% beta_val) %*% (y - delta_val * A_val - X %*% beta_val)
+  return(ff_val)
+}
+
+# Function to calculate performance metrics
+calculate_metrics <- function(G_true, G_est) {
+  n <- nrow(G_true)
+  
+  # Only consider upper triangular part (excluding diagonal) for undirected networks
+  true_edges <- G_true[upper.tri(G_true)]
+  est_edges <- G_est[upper.tri(G_est)]
+  
+  # Calculate confusion matrix
+  TP <- sum(true_edges == 1 & est_edges == 1)  # True Positive
+  TN <- sum(true_edges == 0 & est_edges == 0)  # True Negative
+  FP <- sum(true_edges == 0 & est_edges == 1)  # False Positive
+  FN <- sum(true_edges == 1 & est_edges == 0)  # False Negative
+  
+  # Calculate metrics
+  TPR <- ifelse((TP + FN) > 0, TP / (TP + FN), NA)  # True Positive Rate (Sensitivity)
+  TNR <- ifelse((TN + FP) > 0, TN / (TN + FP), NA)  # True Negative Rate (Specificity)
+  precision <- ifelse((TP + FP) > 0, TP / (TP + FP), NA)
+  recall <- TPR  # Same as TPR
+  F1 <- ifelse(!is.na(precision) & !is.na(recall) & (precision + recall) > 0, 
+               2 * precision * recall / (precision + recall), NA)
+  
+  # Calculate Mean Absolute Deviation (MAD)
+  # For binary networks, this is the proportion of edges that are different
+  mad_value <- mean(abs(true_edges - est_edges))
+  
+  return(list(
+    TP = TP, TN = TN, FP = FP, FN = FN,
+    TPR = TPR, TNR = TNR, 
+    precision = precision, recall = recall,
+    F1 = F1,
+    MAD = mad_value
+  ))
+}
+
+# Create function to process single lambda value (reduced optimization count)
+process_lambda_function <- function(lamda, n, y, X, z1, G_true) {
+  n_params <- n*(n-1)/2
+  
+  # First optimization loop - reduced to 3 times
+  value <- rep(NA, 3)
+  par_list <- list()
+  
+  for (i in 1:3) {
+    op <- optim(f_function, par = runif(n_params, 0, 1), 
+                lower = rep(-0.03, n_params), upper = rep(1.03, n_params),
+                method = "L-BFGS-B", lamda = lamda, n = n, y = y, X = X, z1 = z1)
+    value[i] <- op$value
+    par_list[[i]] <- op$par
+  }
+  
+  par_out <- par_list[[which.min(value)]]
+  
+  # Second optimization loop - reduced to 30 times
+  value_threshold <- rep(NA, 30)
+  par_threshold <- rep(NA, 30)
+  
+  for (p in 1:30) {
+    op <- optim(ff_function, par = runif(1, 0, 1), 
+                lower = -0.03, upper = 1.03,
+                method = "L-BFGS-B", par_out = par_out, n = n, y = y, X = X, z1 = z1)
+    value_threshold[p] <- op$value
+    par_threshold[p] <- op$par
+  }
+  
+  threshold_optimal <- par_threshold[which.min(value_threshold)]
+  theta_final <- ifelse(par_out <= threshold_optimal, 0, 1)
+  
+  # Reconstruct final network
+  G_est <- matrix(0, n, n)
+  idx <- 1
+  for (i in 1:(n-1)) {
+    for (j in (i+1):n) {
+      G_est[i, j] <- theta_final[idx]
+      G_est[j, i] <- theta_final[idx]
+      idx <- idx + 1
+    }
+  }
+  
+  # Calculate recovery rate
+  non_diag <- n*(n-1)
+  correct_rate <- 1 - sum(abs(G_est - G_true)) / non_diag
+  
+  # Calculate additional metrics
+  metrics <- calculate_metrics(G_true, G_est)
+  
+  return(list(
+    G_est = G_est, 
+    correct_rate = correct_rate,
+    TPR = metrics$TPR,
+    TNR = metrics$TNR,
+    F1 = metrics$F1,
+    MAD = metrics$MAD,
+    TP = metrics$TP,
+    TN = metrics$TN,
+    FP = metrics$FP,
+    FN = metrics$FN
+  ))
+}
+
+# Main network recovery function
+run_network_recovery <- function(G_true, delta_true = 2.5, beta_true = c(1, 2, 3, 4, 5), 
+                                 noise_sd = 0.5, n_lambda = 11) {
+  
+  n <- nrow(G_true)
+  
+  # Generate exogenous variables
+  z1 <- runif(n)
+  z2 <- runif(n)
+  z3 <- runif(n)
+  z4 <- runif(n)
+  z5 <- runif(n)
+  X <- as.matrix(data.frame(z1, z2, z3, z4, z5))
+  
+  # Generate dependent variable
+  error <- rnorm(n, 0, noise_sd)
+  y <- solve(diag(rep(1, n)) - delta_true * G_true) %*% (X %*% beta_true) + 
+    solve(diag(rep(1, n)) - delta_true * G_true) %*% error
+  
+  # Set lambda values
+  lamdaa <- seq(0.001, 2.0, length.out = n_lambda)
+  
+  # Use parallel computing
+  num_cores <- detectCores() - 1
+  if (num_cores < 1) num_cores <- 1
+  
+  cl <- makeCluster(num_cores)
+  
+  # Export necessary functions and variables to all nodes
+  clusterExport(cl, varlist = c("f_function", "ff_function", "ginv", "calculate_metrics"),
+                envir = .GlobalEnv)
+  
+  # Load MASS package on all nodes
+  clusterEvalQ(cl, library(MASS))
+  
+  # Parallel computation - use anonymous function to pass all parameters
+  results <- parLapply(cl, lamdaa, function(lam) {
+    # Define process_lambda_function inside anonymous function
+    process_lambda <- function(lamda, n, y, X, z1, G_true) {
+      n_params <- n*(n-1)/2
+      
+      # First optimization loop - reduced to 3 times
+      value <- rep(NA, 3)
+      par_list <- list()
+      
+      for (i in 1:3) {
+        op <- optim(f_function, par = runif(n_params, 0, 1), 
+                    lower = rep(-0.03, n_params), upper = rep(1.03, n_params),
+                    method = "L-BFGS-B", lamda = lamda, n = n, y = y, X = X, z1 = z1)
+        value[i] <- op$value
+        par_list[[i]] <- op$par
+      }
+      
+      par_out <- par_list[[which.min(value)]]
+      
+      # Second optimization loop - reduced to 30 times
+      value_threshold <- rep(NA, 30)
+      par_threshold <- rep(NA, 30)
+      
+      for (p in 1:30) {
+        op <- optim(ff_function, par = runif(1, 0, 1), 
+                    lower = -0.03, upper = 1.03,
+                    method = "L-BFGS-B", par_out = par_out, n = n, y = y, X = X, z1 = z1)
+        value_threshold[p] <- op$value
+        par_threshold[p] <- op$par
+      }
+      
+      threshold_optimal <- par_threshold[which.min(value_threshold)]
+      theta_final <- ifelse(par_out <= threshold_optimal, 0, 1)
+      
+      # Reconstruct final network
+      G_est <- matrix(0, n, n)
+      idx <- 1
+      for (i in 1:(n-1)) {
+        for (j in (i+1):n) {
+          G_est[i, j] <- theta_final[idx]
+          G_est[j, i] <- theta_final[idx]
+          idx <- idx + 1
+        }
+      }
+      
+      # Calculate recovery rate
+      non_diag <- n*(n-1)
+      correct_rate <- 1 - sum(abs(G_est - G_true)) / non_diag
+      
+      # Calculate additional metrics
+      metrics <- calculate_metrics(G_true, G_est)
+      
+      return(list(
+        G_est = G_est, 
+        correct_rate = correct_rate,
+        TPR = metrics$TPR,
+        TNR = metrics$TNR,
+        F1 = metrics$F1,
+        MAD = metrics$MAD,
+        TP = metrics$TP,
+        TN = metrics$TN,
+        FP = metrics$FP,
+        FN = metrics$FN
+      ))
+    }
+    
+    # Call internal function
+    process_lambda(lam, n, y, X, z1, G_true)
+  })
+  
+  stopCluster(cl)
+  
+  # Extract results
+  correct_rates <- sapply(results, function(r) r$correct_rate)
+  best_idx <- which.max(correct_rates)
+  
+  # Extract all metrics for best lambda
+  best_result <- results[[best_idx]]
+  
+  # Also get all metrics across lambdas for analysis
+  all_TPR <- sapply(results, function(r) r$TPR)
+  all_TNR <- sapply(results, function(r) r$TNR)
+  all_F1 <- sapply(results, function(r) r$F1)
+  all_MAD <- sapply(results, function(r) r$MAD)
+  
+  return(list(
+    G_true = G_true,
+    G_est = best_result$G_est,
+    correct_rate = best_result$correct_rate,
+    TPR = best_result$TPR,
+    TNR = best_result$TNR,
+    F1 = best_result$F1,
+    MAD = best_result$MAD,
+    confusion_matrix = list(
+      TP = best_result$TP,
+      TN = best_result$TN,
+      FP = best_result$FP,
+      FN = best_result$FN
+    ),
+    all_correct_rates = correct_rates,
+    all_TPR = all_TPR,
+    all_TNR = all_TNR,
+    all_F1 = all_F1,
+    all_MAD = all_MAD,
+    best_lambda = lamdaa[best_idx]
+  ))
+}
+
+# ============================================
+# 3. Network Structure Feature Extraction Functions
+# ============================================
+
+extract_network_features <- function(G) {
+  n <- nrow(G)
+  
+  # Basic features
+  density <- sum(G) / (n*(n-1))
+  avg_degree <- mean(rowSums(G))
+  degree_variance <- var(rowSums(G))
+  max_degree <- max(rowSums(G))
+  min_degree <- min(rowSums(G))
+  
+  # Clustering coefficient (simplified calculation)
+  clustering_coef <- 0
+  valid_nodes <- 0
+  
+  for (i in 1:n) {
+    neighbors <- which(G[i,] == 1)
+    k <- length(neighbors)
+    if (k >= 2) {
+      # Calculate number of edges between neighbors
+      edges_between_neighbors <- 0
+      for (j in 1:(k-1)) {
+        for (l in (j+1):k) {
+          if (G[neighbors[j], neighbors[l]] == 1) {
+            edges_between_neighbors <- edges_between_neighbors + 1
+          }
+        }
+      }
+      clustering_coef <- clustering_coef + (2 * edges_between_neighbors) / (k * (k-1))
+      valid_nodes <- valid_nodes + 1
+    }
+  }
+  
+  if (valid_nodes > 0) {
+    clustering_coef <- clustering_coef / valid_nodes
+  } else {
+    clustering_coef <- 0
+  }
+  
+  # Degree distribution skewness
+  degrees <- rowSums(G)
+  if (sd(degrees) > 0) {
+    degree_skewness <- sum((degrees - mean(degrees))^3) / (n * sd(degrees)^3)
+  } else {
+    degree_skewness <- 0
+  }
+  
+  # Assortativity (degree correlation) - simplified calculation
+  edge_list <- which(G == 1 & upper.tri(G), arr.ind = TRUE)
+  if (nrow(edge_list) > 1) {
+    degree_correlation <- cor(degrees[edge_list[,1]], degrees[edge_list[,2]])
+  } else {
+    degree_correlation <- 0
+  }
+  
+  # Network diameter (approximate)
+  if (n <= 50) {
+    # For small networks, calculate exact diameter
+    # Using Floyd-Warshall algorithm
+    dist <- G
+    dist[dist == 0] <- Inf
+    diag(dist) <- 0
+    
+    for (k in 1:n) {
+      for (i in 1:n) {
+        for (j in 1:n) {
+          if (dist[i, k] + dist[k, j] < dist[i, j]) {
+            dist[i, j] <- dist[i, k] + dist[k, j]
+          }
+        }
+      }
+    }
+    
+    if (all(is.finite(dist))) {
+      diameter <- max(dist)
+    } else {
+      diameter <- NA
+    }
+  } else {
+    # For large networks, use approximation method
+    diameter <- NA
+  }
+  
+  # Number of connected components
+  # Using simple depth-first search
+  visited <- rep(FALSE, n)
+  components <- 0
+  
+  for (i in 1:n) {
+    if (!visited[i]) {
+      # Start new connected component
+      components <- components + 1
+      stack <- i
+      visited[i] <- TRUE
+      
+      while (length(stack) > 0) {
+        current <- stack[1]
+        stack <- stack[-1]
+        
+        neighbors <- which(G[current,] == 1)
+        for (neighbor in neighbors) {
+          if (!visited[neighbor]) {
+            visited[neighbor] <- TRUE
+            stack <- c(neighbor, stack)
+          }
+        }
+      }
+    }
+  }
+  
+  return(list(
+    density = density,
+    avg_degree = avg_degree,
+    degree_variance = degree_variance,
+    max_degree = max_degree,
+    min_degree = min_degree,
+    clustering_coef = clustering_coef,
+    degree_skewness = degree_skewness,
+    degree_correlation = degree_correlation,
+    diameter = diameter,
+    components = components
+  ))
+}
+
+# ============================================
+# 4. Main Research Function: Network Structure Impact on Recovery Rate
+# ============================================
+
+conduct_network_structure_study <- function(n_networks = 8, n_nodes = 20, n_repetitions = 3) {
+  
+  # Define different network structure configurations
+  network_configs <- list(
+    # Random networks: different densities
+    list(type = "ER", p = 0.1, name = "ER-Sparse(0.1)"),
+    list(type = "ER", p = 0.3, name = "ER-Medium(0.3)"),
+    list(type = "ER", p = 0.5, name = "ER-Dense(0.5)"),
+    
+    # Small world networks
+    list(type = "WS", k = 2, p_rewire = 0.1, name = "WS-Regular(k=2)"),
+    list(type = "WS", k = 2, p_rewire = 0.5, name = "WS-Random(k=2)"),
+    
+    # Scale-free networks
+    list(type = "BA", m = 1, name = "BA-Sparse(m=1)"),
+    list(type = "BA", m = 2, name = "BA-Medium(m=2)"),
+    
+    # Community networks
+    list(type = "Community", n_communities = 2, p_within = 0.8, p_between = 0.05, name = "Community Network"),
+    
+    # Ring networks
+    list(type = "Ring", k = 2, name = "Ring Network"),
+    
+    # Star networks
+    list(type = "Star", name = "Star Network"),
+    
+    # Complete networks
+    list(type = "Complete", name = "Complete Network"),
+    
+    # Tree networks
+    list(type = "Tree", k = 2, name = "Binary Tree")
+  )
+  
+  # Limit number of networks
+  if (n_networks < length(network_configs)) {
+    network_configs <- network_configs[1:n_networks]
+  }
+  
+  # Store results
+  results <- list()
+  
+  # Conduct multiple repetition experiments for each network structure
+  for (config_idx in 1:length(network_configs)) {
+    config <- network_configs[[config_idx]]
+    cat("Studying network type:", config$name, "\n")
+    
+    # Store repetition results for this network type
+    config_results <- list(
+      features = list(),
+      recovery_rates = numeric(n_repetitions),
+      TPRs = numeric(n_repetitions),
+      TNRs = numeric(n_repetitions),
+      F1s = numeric(n_repetitions),
+      MADs = numeric(n_repetitions)
+    )
+    
+    for (rep in 1:n_repetitions) {
+      cat("  Repetition", rep, "/", n_repetitions, "\n")
+      
+      # Generate network
+      if (config$type == "ER") {
+        G_true <- generate_ER_network(n_nodes, config$p)
+      } else if (config$type == "WS") {
+        G_true <- generate_WS_network(n_nodes, config$k, config$p_rewire)
+      } else if (config$type == "BA") {
+        G_true <- generate_BA_network(n_nodes, config$m)
+      } else if (config$type == "Community") {
+        G_true <- generate_community_network(n_nodes, config$n_communities, 
+                                             config$p_within, config$p_between)
+      } else if (config$type == "Ring") {
+        G_true <- generate_ring_network(n_nodes, config$k)
+      } else if (config$type == "Star") {
+        G_true <- generate_star_network(n_nodes)
+      } else if (config$type == "Complete") {
+        G_true <- generate_complete_network(n_nodes)
+      } else if (config$type == "Tree") {
+        G_true <- generate_tree_network(n_nodes, config$k)
+      }
+      
+      # Extract network features (only in first repetition)
+      if (rep == 1) {
+        config_results$features <- extract_network_features(G_true)
+      }
+      
+      # Run network recovery algorithm
+      recovery_result <- tryCatch({
+        run_network_recovery(G_true, n_lambda = 11)  # Use 11 lambda values
+      }, error = function(e) {
+        cat("Error:", e$message, "\n")
+        return(list(
+          correct_rate = NA,
+          TPR = NA,
+          TNR = NA,
+          F1 = NA,
+          MAD = NA
+        ))
+      })
+      
+      # Store results
+      config_results$recovery_rates[rep] <- ifelse(is.null(recovery_result$correct_rate), 
+                                                   NA, recovery_result$correct_rate)
+      config_results$TPRs[rep] <- ifelse(is.null(recovery_result$TPR), 
+                                         NA, recovery_result$TPR)
+      config_results$TNRs[rep] <- ifelse(is.null(recovery_result$TNR), 
+                                         NA, recovery_result$TNR)
+      config_results$F1s[rep] <- ifelse(is.null(recovery_result$F1), 
+                                        NA, recovery_result$F1)
+      config_results$MADs[rep] <- ifelse(is.null(recovery_result$MAD), 
+                                         NA, recovery_result$MAD)
+    }
+    
+    # Calculate average results (ignore NA values)
+    config_results$avg_recovery_rate <- mean(config_results$recovery_rates, na.rm = TRUE)
+    config_results$sd_recovery_rate <- sd(config_results$recovery_rates, na.rm = TRUE)
+    config_results$avg_TPR <- mean(config_results$TPRs, na.rm = TRUE)
+    config_results$sd_TPR <- sd(config_results$TPRs, na.rm = TRUE)
+    config_results$avg_TNR <- mean(config_results$TNRs, na.rm = TRUE)
+    config_results$sd_TNR <- sd(config_results$TNRs, na.rm = TRUE)
+    config_results$avg_F1 <- mean(config_results$F1s, na.rm = TRUE)
+    config_results$sd_F1 <- sd(config_results$F1s, na.rm = TRUE)
+    config_results$avg_MAD <- mean(config_results$MADs, na.rm = TRUE)
+    config_results$sd_MAD <- sd(config_results$MADs, na.rm = TRUE)
+    
+    if (n_repetitions > 1) {
+      config_results$se_recovery_rate <- config_results$sd_recovery_rate / sqrt(n_repetitions)
+      config_results$se_TPR <- config_results$sd_TPR / sqrt(n_repetitions)
+      config_results$se_TNR <- config_results$sd_TNR / sqrt(n_repetitions)
+      config_results$se_F1 <- config_results$sd_F1 / sqrt(n_repetitions)
+      config_results$se_MAD <- config_results$sd_MAD / sqrt(n_repetitions)
+    } else {
+      config_results$se_recovery_rate <- 0
+      config_results$se_TPR <- 0
+      config_results$se_TNR <- 0
+      config_results$se_F1 <- 0
+      config_results$se_MAD <- 0
+    }
+    
+    # Store in overall results
+    results[[config$name]] <- config_results
+  }
+  
+  return(results)
+}
+
+# ============================================
+# 5. Sample Size Study Function
+# ============================================
+
+conduct_sample_size_study <- function(network_type = "ER", network_params = list(p = 0.3), 
+                                      sample_sizes = c(10, 15, 20, 25, 30), 
+                                      n_repetitions = 3) {
+  
+  cat("Studying the impact of sample size on network recovery rate\n")
+  cat("Network type:", network_type, "\n")
+  cat("Sample sizes:", paste(sample_sizes, collapse=", "), "\n")
+  cat("Repetitions:", n_repetitions, "\n\n")
+  
+  # Store results
+  results <- list(
+    sample_sizes = sample_sizes,
+    recovery_rates = matrix(NA, length(sample_sizes), n_repetitions),
+    TPRs = matrix(NA, length(sample_sizes), n_repetitions),
+    TNRs = matrix(NA, length(sample_sizes), n_repetitions),
+    F1s = matrix(NA, length(sample_sizes), n_repetitions),
+    MADs = matrix(NA, length(sample_sizes), n_repetitions),
+    avg_recovery_rates = numeric(length(sample_sizes)),
+    sd_recovery_rates = numeric(length(sample_sizes)),
+    avg_TPRs = numeric(length(sample_sizes)),
+    avg_TNRs = numeric(length(sample_sizes)),
+    avg_F1s = numeric(length(sample_sizes)),
+    avg_MADs = numeric(length(sample_sizes)),
+    features_list = list()
+  )
+  
+  # Experiment for each sample size
+  for (size_idx in 1:length(sample_sizes)) {
+    n_nodes <- sample_sizes[size_idx]
+    cat("Sample size:", n_nodes, "\n")
+    
+    # Store repetition results for this sample size
+    size_recovery_rates <- numeric(n_repetitions)
+    size_TPRs <- numeric(n_repetitions)
+    size_TNRs <- numeric(n_repetitions)
+    size_F1s <- numeric(n_repetitions)
+    size_MADs <- numeric(n_repetitions)
+    
+    for (rep in 1:n_repetitions) {
+      cat("  Repetition", rep, "/", n_repetitions, "\n")
+      
+      # Generate network
+      if (network_type == "ER") {
+        G_true <- generate_ER_network(n_nodes, network_params$p)
+      } else if (network_type == "WS") {
+        G_true <- generate_WS_network(n_nodes, network_params$k, network_params$p_rewire)
+      } else if (network_type == "BA") {
+        G_true <- generate_BA_network(n_nodes, network_params$m)
+      } else if (network_type == "Community") {
+        G_true <- generate_community_network(n_nodes, network_params$n_communities, 
+                                             network_params$p_within, network_params$p_between)
+      } else if (network_type == "Ring") {
+        G_true <- generate_ring_network(n_nodes, network_params$k)
+      } else if (network_type == "Star") {
+        G_true <- generate_star_network(n_nodes)
+      } else if (network_type == "Complete") {
+        G_true <- generate_complete_network(n_nodes)
+      } else if (network_type == "Tree") {
+        G_true <- generate_tree_network(n_nodes, network_params$k)
+      }
+      
+      # Extract network features (only in first repetition)
+      if (rep == 1) {
+        results$features_list[[as.character(n_nodes)]] <- extract_network_features(G_true)
+      }
+      
+      # Run network recovery algorithm
+      recovery_result <- tryCatch({
+        run_network_recovery(G_true, n_lambda = 7)  # Reduce lambda count to speed up
+      }, error = function(e) {
+        cat("Error:", e$message, "\n")
+        return(list(
+          correct_rate = NA,
+          TPR = NA,
+          TNR = NA,
+          F1 = NA,
+          MAD = NA
+        ))
+      })
+      
+      # Store results
+      size_recovery_rates[rep] <- ifelse(is.null(recovery_result$correct_rate), 
+                                         NA, recovery_result$correct_rate)
+      size_TPRs[rep] <- ifelse(is.null(recovery_result$TPR), NA, recovery_result$TPR)
+      size_TNRs[rep] <- ifelse(is.null(recovery_result$TNR), NA, recovery_result$TNR)
+      size_F1s[rep] <- ifelse(is.null(recovery_result$F1), NA, recovery_result$F1)
+      size_MADs[rep] <- ifelse(is.null(recovery_result$MAD), NA, recovery_result$MAD)
+    }
+    
+    # Store results for this sample size
+    results$recovery_rates[size_idx, ] <- size_recovery_rates
+    results$TPRs[size_idx, ] <- size_TPRs
+    results$TNRs[size_idx, ] <- size_TNRs
+    results$F1s[size_idx, ] <- size_F1s
+    results$MADs[size_idx, ] <- size_MADs
+    
+    results$avg_recovery_rates[size_idx] <- mean(size_recovery_rates, na.rm = TRUE)
+    results$sd_recovery_rates[size_idx] <- sd(size_recovery_rates, na.rm = TRUE)
+    results$avg_TPRs[size_idx] <- mean(size_TPRs, na.rm = TRUE)
+    results$avg_TNRs[size_idx] <- mean(size_TNRs, na.rm = TRUE)
+    results$avg_F1s[size_idx] <- mean(size_F1s, na.rm = TRUE)
+    results$avg_MADs[size_idx] <- mean(size_MADs, na.rm = TRUE)
+  }
+  
+  return(results)
+}
+
+# ============================================
+# 6. NEW STUDY: Fixed Edge Count, Varying Node Count
+# ============================================
+
+# Function to generate networks with approximately fixed edge count
+generate_network_fixed_edges <- function(network_type, n, target_edges, params) {
+  # Adjust parameters to achieve approximately target_edges
+  max_iterations <- 20
+  tolerance <- 0.1  # 10% tolerance
+  
+  for (iter in 1:max_iterations) {
+    # Generate network
+    if (network_type == "ER") {
+      # Estimate p needed for target edges
+      p_estimate <- (2 * target_edges) / (n * (n-1))
+      p_estimate <- min(max(p_estimate, 0.01), 0.99)  # Keep within reasonable bounds
+      G <- generate_ER_network(n, p_estimate)
+    } else if (network_type == "WS") {
+      # For WS, adjust k to control edge count
+      k_estimate <- round((2 * target_edges) / n)
+      k_estimate <- max(1, min(k_estimate, n-1))
+      G <- generate_WS_network(n, k_estimate, params$p_rewire)
+    } else if (network_type == "BA") {
+      # For BA, m controls edges per new node
+      m_estimate <- round(target_edges / n)
+      m_estimate <- max(1, min(m_estimate, n-1))
+      G <- generate_BA_network(n, m_estimate)
+    } else if (network_type == "Community") {
+      # For community networks, adjust p_within to control edges
+      n_communities <- params$n_communities
+      community_size <- floor(n / n_communities)
+      max_within_edges <- n_communities * community_size * (community_size-1) / 2
+      max_between_edges <- n_communities * (n_communities-1) * community_size^2 / 2
+      total_max_edges <- max_within_edges + max_between_edges
+      
+      if (target_edges <= max_within_edges) {
+        p_within_estimate <- target_edges / max_within_edges
+        p_between_estimate <- 0
+      } else {
+        p_within_estimate <- 1
+        p_between_estimate <- (target_edges - max_within_edges) / max_between_edges
+      }
+      
+      G <- generate_community_network(n, n_communities, p_within_estimate, p_between_estimate)
+    } else if (network_type == "Ring") {
+      # For ring networks, k controls edges
+      k_estimate <- round(target_edges / n)
+      k_estimate <- max(1, min(k_estimate, floor((n-1)/2)))
+      G <- generate_ring_network(n, k_estimate)
+    } else if (network_type == "Star") {
+      # Star networks have exactly n-1 edges
+      G <- generate_star_network(n)
+    } else if (network_type == "Complete") {
+      # Complete networks have n*(n-1)/2 edges
+      G <- generate_complete_network(n)
+    } else if (network_type == "Tree") {
+      # Tree networks have exactly n-1 edges
+      G <- generate_tree_network(n, params$k)
+    }
+    
+    # Check edge count
+    actual_edges <- sum(G) / 2
+    edge_ratio <- actual_edges / target_edges
+    
+    if (abs(edge_ratio - 1) <= tolerance) {
+      return(G)
+    }
+    
+    # Adjust parameters for next iteration
+    if (network_type == "ER") {
+      params$p <- params$p * (target_edges / actual_edges)
+    } else if (network_type == "WS" || network_type == "Ring") {
+      params$k <- round(params$k * (target_edges / actual_edges))
+    } else if (network_type == "BA") {
+      params$m <- round(params$m * (target_edges / actual_edges))
+    }
+  }
+  
+  cat("Warning: Could not achieve target edges for", network_type, 
+      "with n =", n, "after", max_iterations, "iterations\n")
+  return(G)
+}
+
+conduct_fixed_edges_vary_nodes_study <- function(network_type = "ER", target_edges = 50,
+                                                 node_counts = c(15, 20, 25, 30, 35, 40),
+                                                 n_repetitions = 3) {
+  
+  cat("Studying fixed edge count with varying node count\n")
+  cat("Network type:", network_type, "\n")
+  cat("Target edge count:", target_edges, "\n")
+  cat("Node counts:", paste(node_counts, collapse=", "), "\n")
+  cat("Repetitions:", n_repetitions, "\n\n")
+  
+  # Store results
+  results <- list(
+    node_counts = node_counts,
+    target_edges = target_edges,
+    recovery_rates = matrix(NA, length(node_counts), n_repetitions),
+    TPRs = matrix(NA, length(node_counts), n_repetitions),
+    TNRs = matrix(NA, length(node_counts), n_repetitions),
+    F1s = matrix(NA, length(node_counts), n_repetitions),
+    MADs = matrix(NA, length(node_counts), n_repetitions),
+    avg_recovery_rates = numeric(length(node_counts)),
+    sd_recovery_rates = numeric(length(node_counts)),
+    avg_TPRs = numeric(length(node_counts)),
+    avg_TNRs = numeric(length(node_counts)),
+    avg_F1s = numeric(length(node_counts)),
+    avg_MADs = numeric(length(node_counts)),
+    actual_edge_counts = numeric(length(node_counts)),
+    densities = numeric(length(node_counts)),
+    features_list = list()
+  )
+  
+  # Default parameters for each network type
+  default_params <- list(
+    "ER" = list(p = 0.3),
+    "WS" = list(k = 2, p_rewire = 0.1),
+    "BA" = list(m = 2),
+    "Community" = list(n_communities = 2, p_within = 0.8, p_between = 0.05),
+    "Ring" = list(k = 2),
+    "Star" = list(),
+    "Complete" = list(),
+    "Tree" = list(k = 2)
+  )
+  
+  # Experiment for each node count
+  for (count_idx in 1:length(node_counts)) {
+    n_nodes <- node_counts[count_idx]
+    cat("Node count:", n_nodes, "\n")
+    
+    # Check if target edges is possible
+    max_possible_edges <- n_nodes * (n_nodes - 1) / 2
+    if (target_edges > max_possible_edges) {
+      cat("  Warning: Target edges", target_edges, "exceeds maximum possible", 
+          max_possible_edges, "for n =", n_nodes, "\n")
+      next
+    }
+    
+    # Store repetition results for this node count
+    node_recovery_rates <- numeric(n_repetitions)
+    node_TPRs <- numeric(n_repetitions)
+    node_TNRs <- numeric(n_repetitions)
+    node_F1s <- numeric(n_repetitions)
+    node_MADs <- numeric(n_repetitions)
+    node_actual_edges <- numeric(n_repetitions)
+    
+    for (rep in 1:n_repetitions) {
+      cat("  Repetition", rep, "/", n_repetitions, "\n")
+      
+      # Generate network with approximately fixed edge count
+      params <- default_params[[network_type]]
+      G_true <- generate_network_fixed_edges(network_type, n_nodes, target_edges, params)
+      
+      # Record actual edge count
+      actual_edges <- sum(G_true) / 2
+      node_actual_edges[rep] <- actual_edges
+      
+      # Extract network features (only in first repetition)
+      if (rep == 1) {
+        results$features_list[[as.character(n_nodes)]] <- extract_network_features(G_true)
+        results$densities[count_idx] <- results$features_list[[as.character(n_nodes)]]$density
+      }
+      
+      # Run network recovery algorithm
+      recovery_result <- tryCatch({
+        run_network_recovery(G_true, n_lambda = 7)  # Reduce lambda count to speed up
+      }, error = function(e) {
+        cat("  Error:", e$message, "\n")
+        return(list(
+          correct_rate = NA,
+          TPR = NA,
+          TNR = NA,
+          F1 = NA,
+          MAD = NA
+        ))
+      })
+      
+      # Store results
+      node_recovery_rates[rep] <- ifelse(is.null(recovery_result$correct_rate), 
+                                         NA, recovery_result$correct_rate)
+      node_TPRs[rep] <- ifelse(is.null(recovery_result$TPR), NA, recovery_result$TPR)
+      node_TNRs[rep] <- ifelse(is.null(recovery_result$TNR), NA, recovery_result$TNR)
+      node_F1s[rep] <- ifelse(is.null(recovery_result$F1), NA, recovery_result$F1)
+      node_MADs[rep] <- ifelse(is.null(recovery_result$MAD), NA, recovery_result$MAD)
+    }
+    
+    # Store results for this node count
+    results$recovery_rates[count_idx, ] <- node_recovery_rates
+    results$TPRs[count_idx, ] <- node_TPRs
+    results$TNRs[count_idx, ] <- node_TNRs
+    results$F1s[count_idx, ] <- node_F1s
+    results$MADs[count_idx, ] <- node_MADs
+    
+    results$avg_recovery_rates[count_idx] <- mean(node_recovery_rates, na.rm = TRUE)
+    results$sd_recovery_rates[count_idx] <- sd(node_recovery_rates, na.rm = TRUE)
+    results$avg_TPRs[count_idx] <- mean(node_TPRs, na.rm = TRUE)
+    results$avg_TNRs[count_idx] <- mean(node_TNRs, na.rm = TRUE)
+    results$avg_F1s[count_idx] <- mean(node_F1s, na.rm = TRUE)
+    results$avg_MADs[count_idx] <- mean(node_MADs, na.rm = TRUE)
+    results$actual_edge_counts[count_idx] <- mean(node_actual_edges, na.rm = TRUE)
+  }
+  
+  return(results)
+}
+
+# ============================================
+# 7. NEW STUDY: Fixed Node Count, Varying Edge Count
+# ============================================
+
+conduct_fixed_nodes_vary_edges_study <- function(network_type = "ER", fixed_nodes = 30,
+                                                 edge_densities = c(0.1, 0.2, 0.3, 0.4, 0.5),
+                                                 n_repetitions = 3) {
+  
+  cat("Studying fixed node count with varying edge count\n")
+  cat("Network type:", network_type, "\n")
+  cat("Fixed node count:", fixed_nodes, "\n")
+  cat("Edge densities:", paste(edge_densities, collapse=", "), "\n")
+  cat("Repetitions:", n_repetitions, "\n\n")
+  
+  # Store results
+  results <- list(
+    edge_densities = edge_densities,
+    fixed_nodes = fixed_nodes,
+    recovery_rates = matrix(NA, length(edge_densities), n_repetitions),
+    TPRs = matrix(NA, length(edge_densities), n_repetitions),
+    TNRs = matrix(NA, length(edge_densities), n_repetitions),
+    F1s = matrix(NA, length(edge_densities), n_repetitions),
+    MADs = matrix(NA, length(edge_densities), n_repetitions),
+    avg_recovery_rates = numeric(length(edge_densities)),
+    sd_recovery_rates = numeric(length(edge_densities)),
+    avg_TPRs = numeric(length(edge_densities)),
+    avg_TNRs = numeric(length(edge_densities)),
+    avg_F1s = numeric(length(edge_densities)),
+    avg_MADs = numeric(length(edge_densities)),
+    actual_edge_counts = numeric(length(edge_densities)),
+    features_list = list()
+  )
+  
+  # Default parameters for each network type
+  default_params <- list(
+    "ER" = list(p = 0.3),
+    "WS" = list(k = 2, p_rewire = 0.1),
+    "BA" = list(m = 2),
+    "Community" = list(n_communities = 2, p_within = 0.8, p_between = 0.05),
+    "Ring" = list(k = 2),
+    "Star" = list(),
+    "Complete" = list(),
+    "Tree" = list(k = 2)
+  )
+  
+  # Experiment for each edge density
+  for (density_idx in 1:length(edge_densities)) {
+    target_density <- edge_densities[density_idx]
+    cat("Target density:", target_density, "\n")
+    
+    # Calculate target edge count
+    target_edges <- round(target_density * fixed_nodes * (fixed_nodes - 1) / 2)
+    
+    # Store repetition results for this density
+    density_recovery_rates <- numeric(n_repetitions)
+    density_TPRs <- numeric(n_repetitions)
+    density_TNRs <- numeric(n_repetitions)
+    density_F1s <- numeric(n_repetitions)
+    density_MADs <- numeric(n_repetitions)
+    density_actual_edges <- numeric(n_repetitions)
+    
+    for (rep in 1:n_repetitions) {
+      cat("  Repetition", rep, "/", n_repetitions, "\n")
+      
+      # Generate network with target density
+      if (network_type == "ER") {
+        G_true <- generate_ER_network(fixed_nodes, target_density)
+      } else if (network_type == "WS") {
+        # Adjust k to achieve approximate density
+        k_estimate <- round(target_density * (fixed_nodes - 1) / 2)
+        k_estimate <- max(1, min(k_estimate, fixed_nodes-1))
+        G_true <- generate_WS_network(fixed_nodes, k_estimate, default_params$WS$p_rewire)
+      } else if (network_type == "BA") {
+        # For BA, m controls edges per new node
+        m_estimate <- round(target_density * (fixed_nodes - 1) / 2)
+        m_estimate <- max(1, min(m_estimate, fixed_nodes-1))
+        G_true <- generate_BA_network(fixed_nodes, m_estimate)
+      } else if (network_type == "Community") {
+        # Adjust p_within and p_between
+        n_communities <- default_params$Community$n_communities
+        max_within_edges <- n_communities * (fixed_nodes/n_communities) * 
+          ((fixed_nodes/n_communities)-1) / 2
+        max_between_edges <- n_communities * (n_communities-1) * 
+          (fixed_nodes/n_communities)^2 / 2
+        total_max_edges <- max_within_edges + max_between_edges
+        
+        if (target_edges <= max_within_edges) {
+          p_within_estimate <- target_edges / max_within_edges
+          p_between_estimate <- 0
+        } else {
+          p_within_estimate <- 1
+          p_between_estimate <- (target_edges - max_within_edges) / max_between_edges
+        }
+        
+        G_true <- generate_community_network(fixed_nodes, n_communities, 
+                                            p_within_estimate, p_between_estimate)
+      } else if (network_type == "Ring") {
+        # Adjust k for ring network
+        k_estimate <- round(target_density * (fixed_nodes - 1) / 2)
+        k_estimate <- max(1, min(k_estimate, floor((fixed_nodes-1)/2)))
+        G_true <- generate_ring_network(fixed_nodes, k_estimate)
+      } else if (network_type == "Star") {
+        # Star network has fixed density of ~2/n
+        G_true <- generate_star_network(fixed_nodes)
+      } else if (network_type == "Complete") {
+        # Complete network has density 1
+        G_true <- generate_complete_network(fixed_nodes)
+      } else if (network_type == "Tree") {
+        # Tree network has density ~2/n
+        G_true <- generate_tree_network(fixed_nodes, default_params$Tree$k)
+      }
+      
+      # Record actual edge count
+      actual_edges <- sum(G_true) / 2
+      density_actual_edges[rep] <- actual_edges
+      
+      # Extract network features (only in first repetition)
+      if (rep == 1) {
+        results$features_list[[as.character(target_density)]] <- extract_network_features(G_true)
+      }
+      
+      # Run network recovery algorithm
+      recovery_result <- tryCatch({
+        run_network_recovery(G_true, n_lambda = 7)  # Reduce lambda count to speed up
+      }, error = function(e) {
+        cat("  Error:", e$message, "\n")
+        return(list(
+          correct_rate = NA,
+          TPR = NA,
+          TNR = NA,
+          F1 = NA,
+          MAD = NA
+        ))
+      })
+      
+      # Store results
+      density_recovery_rates[rep] <- ifelse(is.null(recovery_result$correct_rate), 
+                                            NA, recovery_result$correct_rate)
+      density_TPRs[rep] <- ifelse(is.null(recovery_result$TPR), NA, recovery_result$TPR)
+      density_TNRs[rep] <- ifelse(is.null(recovery_result$TNR), NA, recovery_result$TNR)
+      density_F1s[rep] <- ifelse(is.null(recovery_result$F1), NA, recovery_result$F1)
+      density_MADs[rep] <- ifelse(is.null(recovery_result$MAD), NA, recovery_result$MAD)
+    }
+    
+    # Store results for this density
+    results$recovery_rates[density_idx, ] <- density_recovery_rates
+    results$TPRs[density_idx, ] <- density_TPRs
+    results$TNRs[density_idx, ] <- density_TNRs
+    results$F1s[density_idx, ] <- density_F1s
+    results$MADs[density_idx, ] <- density_MADs
+    
+    results$avg_recovery_rates[density_idx] <- mean(density_recovery_rates, na.rm = TRUE)
+    results$sd_recovery_rates[density_idx] <- sd(density_recovery_rates, na.rm = TRUE)
+    results$avg_TPRs[density_idx] <- mean(density_TPRs, na.rm = TRUE)
+    results$avg_TNRs[density_idx] <- mean(density_TNRs, na.rm = TRUE)
+    results$avg_F1s[density_idx] <- mean(density_F1s, na.rm = TRUE)
+    results$avg_MADs[density_idx] <- mean(density_MADs, na.rm = TRUE)
+    results$actual_edge_counts[density_idx] <- mean(density_actual_edges, na.rm = TRUE)
+  }
+  
+  return(results)
+}
+
+# ============================================
+# 8. Results Analysis and Visualization
+# ============================================
+
+analyze_and_visualize_results <- function(results) {
+  
+  # Prepare data for analysis
+  network_names <- names(results)
+  n_networks <- length(network_names)
+  
+  # Extract key metrics
+  recovery_rates <- sapply(results, function(x) x$avg_recovery_rate)
+  recovery_sds <- sapply(results, function(x) x$sd_recovery_rate)
+  recovery_ses <- sapply(results, function(x) x$se_recovery_rate)
+  
+  # Extract new metrics
+  TPRs <- sapply(results, function(x) x$avg_TPR)
+  TNRs <- sapply(results, function(x) x$avg_TNR)
+  F1s <- sapply(results, function(x) x$avg_F1)
+  MADs <- sapply(results, function(x) x$avg_MAD)
+  
+  # Extract network features
+  features_matrix <- matrix(NA, n_networks, 10)
+  colnames(features_matrix) <- c("Density", "Avg_Degree", "Degree_Variance", "Max_Degree", "Min_Degree", 
+                                 "Clustering_Coefficient", "Degree_Skewness", "Degree_Correlation", "Diameter", "Components")
+  
+  for (i in 1:n_networks) {
+    features <- results[[i]]$features
+    features_matrix[i, ] <- c(
+      features$density,
+      features$avg_degree,
+      features$degree_variance,
+      features$max_degree,
+      features$min_degree,
+      features$clustering_coef,
+      features$degree_skewness,
+      features$degree_correlation,
+      ifelse(is.na(features$diameter), 0, features$diameter),
+      features$components
+    )
+  }
+  
+  # 1. Basic statistical summary
+  cat("============================================\n")
+  cat("Research Results: Impact of Network Structure on Recovery Rate\n")
+  cat("============================================\n\n")
+  
+  summary_df <- data.frame(
+    Network_Type = network_names,
+    Avg_Recovery_Rate = round(recovery_rates, 3),
+    Recovery_Rate_SD = round(recovery_sds, 3),
+    Standard_Error = round(recovery_ses, 3),
+    TPR = round(TPRs, 3),
+    TNR = round(TNRs, 3),
+    F1_Score = round(F1s, 3),
+    MAD = round(MADs, 3),
+    Density = round(features_matrix[, "Density"], 3),
+    Clustering_Coefficient = round(features_matrix[, "Clustering_Coefficient"], 3),
+    Degree_Variance = round(features_matrix[, "Degree_Variance"], 3)
+  )
+  
+  print(summary_df)
+  
+  # 2. Correlation analysis
+  cat("\n\n============================================\n")
+  cat("Correlation Analysis between Network Features and Recovery Metrics\n")
+  cat("============================================\n\n")
+  
+  # Check if enough data for correlation analysis
+  complete_cases <- complete.cases(features_matrix, recovery_rates, TPRs, TNRs, F1s, MADs)
+  if (sum(complete_cases) >= 2) {
+    # Combine all metrics
+    all_metrics <- cbind(
+      Recovery_Rate = recovery_rates[complete_cases],
+      TPR = TPRs[complete_cases],
+      TNR = TNRs[complete_cases],
+      F1 = F1s[complete_cases],
+      MAD = MADs[complete_cases]
+    )
+    
+    # Calculate correlations
+    correlations <- cor(features_matrix[complete_cases, ], all_metrics, use = "complete.obs")
+    print(round(correlations, 3))
+  } else {
+    cat("Insufficient data for correlation analysis\n")
+    correlations <- NULL
+  }
+  
+  # 3. Create visualizations
+  # Set graphics parameters
+  par(mfrow = c(3, 3), mar = c(5, 4, 3, 2))
+  
+  # 3.1 Recovery rate bar chart
+  bar_colors <- rainbow(n_networks)
+  bar_pos <- barplot(recovery_rates, names.arg = network_names, las = 2, cex.names = 0.7,
+                     ylim = c(0, 1), col = bar_colors, ylab = "Average Recovery Rate",
+                     main = "Recovery Rate for Different Network Structures")
+  
+  # Add error bars
+  if (n_networks > 1) {
+    arrows(x0 = bar_pos, y0 = recovery_rates - recovery_ses,
+           x1 = bar_pos, y1 = recovery_rates + recovery_ses,
+           angle = 90, code = 3, length = 0.05)
+  }
+  
+  # 3.2 TPR vs TNR scatter plot
+  plot(TPRs, TNRs, pch = 19, col = "blue",
+       xlab = "True Positive Rate (TPR)", ylab = "True Negative Rate (TNR)",
+       main = "TPR vs TNR for Different Network Structures",
+       xlim = c(0, 1), ylim = c(0, 1))
+  abline(h = 0.5, v = 0.5, lty = 2, col = "gray")
+  text(TPRs, TNRs, network_names, pos = 3, cex = 0.7)
+  
+  # 3.3 F1 Score bar chart
+  bar_pos_f1 <- barplot(F1s, names.arg = network_names, las = 2, cex.names = 0.7,
+                        ylim = c(0, 1), col = "green", ylab = "F1 Score",
+                        main = "F1 Score for Different Network Structures")
+  
+  # 3.4 MAD bar chart
+  bar_pos_mad <- barplot(MADs, names.arg = network_names, las = 2, cex.names = 0.7,
+                         ylim = c(0, max(MADs, na.rm = TRUE) * 1.1), col = "red", 
+                         ylab = "Mean Absolute Deviation (MAD)",
+                         main = "MAD for Different Network Structures")
+  
+  # 3.5 Recovery rate vs F1 score
+  plot(recovery_rates, F1s, pch = 19, col = "purple",
+       xlab = "Recovery Rate", ylab = "F1 Score",
+       main = "Recovery Rate vs F1 Score",
+       xlim = c(0, 1), ylim = c(0, 1))
+  abline(a = 0, b = 1, lty = 2, col = "gray")
+  text(recovery_rates, F1s, network_names, pos = 3, cex = 0.7)
+  
+  # 3.6 Recovery rate vs network density
+  if (n_networks > 1) {
+    plot(features_matrix[, "Density"], recovery_rates, pch = 19, col = "blue",
+         xlab = "Network Density", ylab = "Recovery Rate",
+         main = "Recovery Rate vs Network Density")
+    if (sum(!is.na(features_matrix[, "Density"])) > 1 && sum(!is.na(recovery_rates)) > 1) {
+      lm_fit <- lm(recovery_rates ~ features_matrix[, "Density"])
+      abline(lm_fit, col = "red", lwd = 2)
+    }
+    text(features_matrix[, "Density"], recovery_rates, network_names, pos = 3, cex = 0.7)
+  }
+  
+  # 3.7 F1 score vs network density
+  if (n_networks > 1) {
+    plot(features_matrix[, "Density"], F1s, pch = 19, col = "green",
+         xlab = "Network Density", ylab = "F1 Score",
+         main = "F1 Score vs Network Density")
+    if (sum(!is.na(features_matrix[, "Density"])) > 1 && sum(!is.na(F1s)) > 1) {
+      lm_fit <- lm(F1s ~ features_matrix[, "Density"])
+      abline(lm_fit, col = "red", lwd = 2)
+    }
+    text(features_matrix[, "Density"], F1s, network_names, pos = 3, cex = 0.7)
+  }
+  
+  # 3.8 TPR vs network density
+  if (n_networks > 1) {
+    plot(features_matrix[, "Density"], TPRs, pch = 19, col = "orange",
+         xlab = "Network Density", ylab = "True Positive Rate (TPR)",
+         main = "TPR vs Network Density")
+    if (sum(!is.na(features_matrix[, "Density"])) > 1 && sum(!is.na(TPRs)) > 1) {
+      lm_fit <- lm(TPRs ~ features_matrix[, "Density"])
+      abline(lm_fit, col = "red", lwd = 2)
+    }
+    text(features_matrix[, "Density"], TPRs, network_names, pos = 3, cex = 0.7)
+  }
+  
+  # 3.9 TNR vs network density
+  if (n_networks > 1) {
+    plot(features_matrix[, "Density"], TNRs, pch = 19, col = "brown",
+         xlab = "Network Density", ylab = "True Negative Rate (TNR)",
+         main = "TNR vs Network Density")
+    if (sum(!is.na(features_matrix[, "Density"])) > 1 && sum(!is.na(TNRs)) > 1) {
+      lm_fit <- lm(TNRs ~ features_matrix[, "Density"])
+      abline(lm_fit, col = "red", lwd = 2)
+    }
+    text(features_matrix[, "Density"], TNRs, network_names, pos = 3, cex = 0.7)
+  }
+  
+  # Reset graphics parameters
+  par(mfrow = c(1, 1))
+  
+  # 4. Regression analysis
+  cat("\n\n============================================\n")
+  cat("Multiple Variable Regression Analysis (Recovery Rate)\n")
+  cat("============================================\n\n")
+  
+  # Prepare regression data
+  regression_data <- data.frame(
+    Recovery_Rate = recovery_rates,
+    Density = features_matrix[, "Density"],
+    Clustering = features_matrix[, "Clustering_Coefficient"],
+    Degree_Variance = features_matrix[, "Degree_Variance"],
+    Degree_Skewness = features_matrix[, "Degree_Skewness"]
+  )
+  
+  # Fit regression model for recovery rate
+  model_recovery <- tryCatch({
+    lm(Recovery_Rate ~ Density + Clustering + Degree_Variance + Degree_Skewness, 
+       data = regression_data)
+  }, error = function(e) {
+    cat("Recovery rate regression model fitting failed:", e$message, "\n")
+    return(NULL)
+  })
+  
+  if (!is.null(model_recovery)) {
+    print(summary(model_recovery))
+  }
+  
+  # 5. Best and worst network structures based on F1 score
+  cat("\n\n============================================\n")
+  cat("Best and Worst Network Structures (Based on F1 Score)\n")
+  cat("============================================\n\n")
+  
+  if (length(F1s) > 0 && sum(!is.na(F1s)) > 0) {
+    valid_idx <- which(!is.na(F1s))
+    if (length(valid_idx) > 0) {
+      best_idx <- valid_idx[which.max(F1s[valid_idx])]
+      worst_idx <- valid_idx[which.min(F1s[valid_idx])]
+      
+      cat("Best F1 score network:", network_names[best_idx], "\n")
+      cat("F1 Score:", round(F1s[best_idx], 3), "\n")
+      cat("Recovery rate:", round(recovery_rates[best_idx], 3), "\n")
+      cat("TPR:", round(TPRs[best_idx], 3), " TNR:", round(TNRs[best_idx], 3), "\n")
+      cat("MAD:", round(MADs[best_idx], 3), "\n")
+      cat("Main features:\n")
+      cat("  Density:", round(features_matrix[best_idx, "Density"], 3), "\n")
+      cat("  Clustering coefficient:", round(features_matrix[best_idx, "Clustering_Coefficient"], 3), "\n")
+      cat("  Degree variance:", round(features_matrix[best_idx, "Degree_Variance"], 3), "\n\n")
+      
+      cat("Worst F1 score network:", network_names[worst_idx], "\n")
+      cat("F1 Score:", round(F1s[worst_idx], 3), "\n")
+      cat("Recovery rate:", round(recovery_rates[worst_idx], 3), "\n")
+      cat("TPR:", round(TPRs[worst_idx], 3), " TNR:", round(TNRs[worst_idx], 3), "\n")
+      cat("MAD:", round(MADs[worst_idx], 3), "\n")
+      cat("Main features:\n")
+      cat("  Density:", round(features_matrix[worst_idx, "Density"], 3), "\n")
+      cat("  Clustering coefficient:", round(features_matrix[worst_idx, "Clustering_Coefficient"], 3), "\n")
+      cat("  Degree variance:", round(features_matrix[worst_idx, "Degree_Variance"], 3), "\n")
+    }
+  } else {
+    cat("No valid F1 score data\n")
+  }
+  
+  # 6. Trade-off analysis between TPR and TNR
+  cat("\n\n============================================\n")
+  cat("Trade-off Analysis: TPR vs TNR\n")
+  cat("============================================\n\n")
+  
+  if (length(TPRs) > 0 && length(TNRs) > 0 && sum(!is.na(TPRs)) > 0 && sum(!is.na(TNRs)) > 0) {
+    # Calculate balance score (geometric mean of TPR and TNR)
+    balance_scores <- sqrt(TPRs * TNRs)
+    
+    # Find network with best balance
+    best_balance_idx <- which.max(balance_scores)
+    
+    cat("Network with best TPR-TNR balance:", network_names[best_balance_idx], "\n")
+    cat("Balance score (sqrt(TPR*TNR)):", round(balance_scores[best_balance_idx], 3), "\n")
+    cat("TPR:", round(TPRs[best_balance_idx], 3), " TNR:", round(TNRs[best_balance_idx], 3), "\n")
+    cat("F1 Score:", round(F1s[best_balance_idx], 3), "\n\n")
+    
+    # Calculate correlation between TPR and TNR
+    tpr_tnr_cor <- cor(TPRs, TNRs, use = "complete.obs")
+    cat("Correlation between TPR and TNR:", round(tpr_tnr_cor, 3), "\n")
+    
+    if (tpr_tnr_cor < -0.3) {
+      cat("Interpretation: Strong trade-off between TPR and TNR (when one increases, the other decreases)\n")
+    } else if (tpr_tnr_cor > 0.3) {
+      cat("Interpretation: TPR and TNR tend to increase together\n")
+    } else {
+      cat("Interpretation: Weak relationship between TPR and TNR\n")
+    }
+  }
+  
+  # 7. Return analysis results
+  return(list(
+    summary = summary_df,
+    correlations = correlations,
+    regression_model_recovery = model_recovery,
+    features_matrix = features_matrix,
+    network_names = network_names,
+    recovery_rates = recovery_rates,
+    recovery_sds = recovery_sds,
+    recovery_ses = recovery_ses,
+    TPRs = TPRs,
+    TNRs = TNRs,
+    F1s = F1s,
+    MADs = MADs
+  ))
+}
+
+# ============================================
+# 9. Visualization Functions for New Studies
+# ============================================
+
+# Visualize fixed edges with varying nodes study results
+visualize_fixed_edges_vary_nodes <- function(fixed_edges_results) {
+  
+  # Prepare data frame
+  plot_data <- data.frame(
+    Node_Count = fixed_edges_results$node_counts,
+    Recovery_Rate = fixed_edges_results$avg_recovery_rates,
+    SD_Recovery = fixed_edges_results$sd_recovery_rates,
+    TPR = fixed_edges_results$avg_TPRs,
+    TNR = fixed_edges_results$avg_TNRs,
+    F1 = fixed_edges_results$avg_F1s,
+    MAD = fixed_edges_results$avg_MADs,
+    Actual_Edges = fixed_edges_results$actual_edge_counts,
+    Density = fixed_edges_results$densities
+  )
+  
+  # Calculate standard error
+  n_repetitions <- ncol(fixed_edges_results$recovery_rates)
+  if (is.null(n_repetitions) || n_repetitions == 0) n_repetitions <- 1
+  plot_data$SE_Recovery <- plot_data$SD_Recovery / sqrt(n_repetitions)
+  
+  # Create visualization
+  par(mfrow = c(3, 3), mar = c(5, 4, 4, 2))
+  
+  # 1. Recovery rate vs node count
+  plot(plot_data$Node_Count, plot_data$Recovery_Rate, 
+       type = "b", pch = 19, col = "blue", lwd = 2,
+       xlab = "Node Count", ylab = "Average Recovery Rate",
+       main = "Fixed Edges: Recovery Rate vs Node Count",
+       ylim = c(0, 1))
+  
+  # Add error bars
+  if (nrow(plot_data) > 0) {
+    arrows(plot_data$Node_Count, plot_data$Recovery_Rate - plot_data$SE_Recovery,
+           plot_data$Node_Count, plot_data$Recovery_Rate + plot_data$SE_Recovery,
+           angle = 90, code = 3, length = 0.05)
+  }
+  
+  # Add regression line
+  if (nrow(plot_data) > 1) {
+    model <- lm(Recovery_Rate ~ Node_Count, data = plot_data)
+    abline(model, col = "red", lty = 2, lwd = 2)
+  }
+  
+  # 2. TPR vs node count
+  plot(plot_data$Node_Count, plot_data$TPR, 
+       type = "b", pch = 19, col = "green", lwd = 2,
+       xlab = "Node Count", ylab = "True Positive Rate (TPR)",
+       main = "TPR vs Node Count",
+       ylim = c(0, 1))
+  
+  # 3. TNR vs node count
+  plot(plot_data$Node_Count, plot_data$TNR, 
+       type = "b", pch = 19, col = "orange", lwd = 2,
+       xlab = "Node Count", ylab = "True Negative Rate (TNR)",
+       main = "TNR vs Node Count",
+       ylim = c(0, 1))
+  
+  # 4. F1 score vs node count
+  plot(plot_data$Node_Count, plot_data$F1, 
+       type = "b", pch = 19, col = "purple", lwd = 2,
+       xlab = "Node Count", ylab = "F1 Score",
+       main = "F1 Score vs Node Count",
+       ylim = c(0, 1))
+  
+  # 5. MAD vs node count
+  plot(plot_data$Node_Count, plot_data$MAD, 
+       type = "b", pch = 19, col = "red", lwd = 2,
+       xlab = "Node Count", ylab = "Mean Absolute Deviation (MAD)",
+       main = "MAD vs Node Count")
+  
+  # 6. Actual edges vs node count
+  plot(plot_data$Node_Count, plot_data$Actual_Edges, 
+       type = "b", pch = 19, col = "brown", lwd = 2,
+       xlab = "Node Count", ylab = "Actual Edge Count",
+       main = "Actual Edge Count vs Node Count")
+  abline(h = fixed_edges_results$target_edges, col = "red", lty = 2, lwd = 2)
+  text(max(plot_data$Node_Count) * 0.7, fixed_edges_results$target_edges * 1.05, 
+       paste("Target:", fixed_edges_results$target_edges), col = "red")
+  
+  # 7. Density vs node count
+  plot(plot_data$Node_Count, plot_data$Density, 
+       type = "b", pch = 19, col = "purple", lwd = 2,
+       xlab = "Node Count", ylab = "Network Density",
+       main = "Network Density vs Node Count")
+  
+  # 8. TPR vs TNR
+  plot(plot_data$TPR, plot_data$TNR, 
+       type = "b", pch = 19, col = "blue", lwd = 2,
+       xlab = "True Positive Rate (TPR)", ylab = "True Negative Rate (TNR)",
+       main = "TPR vs TNR",
+       xlim = c(0, 1), ylim = c(0, 1))
+  abline(h = 0.5, v = 0.5, lty = 2, col = "gray")
+  
+  # 9. Recovery rate vs F1 score
+  plot(plot_data$Recovery_Rate, plot_data$F1, 
+       type = "b", pch = 19, col = "green", lwd = 2,
+       xlab = "Recovery Rate", ylab = "F1 Score",
+       main = "Recovery Rate vs F1 Score",
+       xlim = c(0, 1), ylim = c(0, 1))
+  abline(a = 0, b = 1, lty = 2, col = "gray")
+  
+  par(mfrow = c(1, 1))
+  
+  # Output results
+  cat("============================================\n")
+  cat("Fixed Edge Count Study Results\n")
+  cat("============================================\n\n")
+  
+  results_df <- data.frame(
+    Node_Count = plot_data$Node_Count,
+    Target_Edges = fixed_edges_results$target_edges,
+    Actual_Edges = round(plot_data$Actual_Edges, 1),
+    Density = round(plot_data$Density, 3),
+    Recovery_Rate = round(plot_data$Recovery_Rate, 3),
+    TPR = round(plot_data$TPR, 3),
+    TNR = round(plot_data$TNR, 3),
+    F1_Score = round(plot_data$F1, 3),
+    MAD = round(plot_data$MAD, 3),
+    Standard_Error = round(plot_data$SE_Recovery, 3)
+  )
+  
+  print(results_df)
+  
+  # Analyze trends
+  if (nrow(plot_data) > 1) {
+    cat("\nTrend Analysis:\n")
+    cat("1. Node count increased from", min(plot_data$Node_Count), "to", max(plot_data$Node_Count), "\n")
+    cat("2. Recovery rate range:", round(min(plot_data$Recovery_Rate), 3), "to", round(max(plot_data$Recovery_Rate), 3), "\n")
+    cat("3. F1 score range:", round(min(plot_data$F1, na.rm = TRUE), 3), "to", round(max(plot_data$F1, na.rm = TRUE), 3), "\n")
+    cat("4. TPR range:", round(min(plot_data$TPR, na.rm = TRUE), 3), "to", round(max(plot_data$TPR, na.rm = TRUE), 3), "\n")
+    cat("5. TNR range:", round(min(plot_data$TNR, na.rm = TRUE), 3), "to", round(max(plot_data$TNR, na.rm = TRUE), 3), "\n")
+    cat("6. MAD range:", round(min(plot_data$MAD, na.rm = TRUE), 3), "to", round(max(plot_data$MAD, na.rm = TRUE), 3), "\n")
+    cat("7. Density decreased from", round(max(plot_data$Density), 3), "to", round(min(plot_data$Density), 3), "\n")
+    
+    # Calculate rate of change
+    if (nrow(plot_data) >= 2) {
+      initial_rate <- plot_data$Recovery_Rate[1]
+      final_rate <- plot_data$Recovery_Rate[nrow(plot_data)]
+      change_rate <- (final_rate - initial_rate) / initial_rate * 100
+      cat("8. Recovery rate change percentage:", round(change_rate, 2), "%\n")
+      
+      # Check correlation between density and various metrics
+      cat("\nCorrelations with Density:\n")
+      metrics_to_check <- c("Recovery_Rate", "TPR", "TNR", "F1", "MAD")
+      for (metric in metrics_to_check) {
+        if (metric %in% names(plot_data)) {
+          cor_val <- cor(plot_data$Density, plot_data[[metric]], use = "complete.obs")
+          cat(paste0("  - Density vs ", metric, ": ", round(cor_val, 3), "\n"))
+        }
+      }
+    }
+  }
+  
+  return(list(
+    results_table = results_df,
+    plot_data = plot_data
+  ))
+}
+
+# Visualize fixed nodes with varying edges study results
+visualize_fixed_nodes_vary_edges <- function(fixed_nodes_results) {
+  
+  # Prepare data frame
+  plot_data <- data.frame(
+    Target_Density = fixed_nodes_results$edge_densities,
+    Recovery_Rate = fixed_nodes_results$avg_recovery_rates,
+    SD_Recovery = fixed_nodes_results$sd_recovery_rates,
+    TPR = fixed_nodes_results$avg_TPRs,
+    TNR = fixed_nodes_results$avg_TNRs,
+    F1 = fixed_nodes_results$avg_F1s,
+    MAD = fixed_nodes_results$avg_MADs,
+    Actual_Edges = fixed_nodes_results$actual_edge_counts
+  )
+  
+  # Calculate standard error
+  n_repetitions <- ncol(fixed_nodes_results$recovery_rates)
+  if (is.null(n_repetitions) || n_repetitions == 0) n_repetitions <- 1
+  plot_data$SE_Recovery <- plot_data$SD_Recovery / sqrt(n_repetitions)
+  
+  # Calculate actual density
+  max_possible_edges <- fixed_nodes_results$fixed_nodes * (fixed_nodes_results$fixed_nodes - 1) / 2
+  plot_data$Actual_Density <- plot_data$Actual_Edges / max_possible_edges
+  
+  # Create visualization
+  par(mfrow = c(3, 3), mar = c(5, 4, 4, 2))
+  
+  # 1. Recovery rate vs target density
+  plot(plot_data$Target_Density, plot_data$Recovery_Rate, 
+       type = "b", pch = 19, col = "blue", lwd = 2,
+       xlab = "Target Density", ylab = "Average Recovery Rate",
+       main = "Fixed Nodes: Recovery Rate vs Target Density",
+       ylim = c(0, 1))
+  
+  # Add error bars
+  if (nrow(plot_data) > 0) {
+    arrows(plot_data$Target_Density, plot_data$Recovery_Rate - plot_data$SE_Recovery,
+           plot_data$Target_Density, plot_data$Recovery_Rate + plot_data$SE_Recovery,
+           angle = 90, code = 3, length = 0.05)
+  }
+  
+  # Add regression line
+  if (nrow(plot_data) > 1) {
+    model <- lm(Recovery_Rate ~ Target_Density, data = plot_data)
+    abline(model, col = "red", lty = 2, lwd = 2)
+  }
+  
+  # 2. TPR vs target density
+  plot(plot_data$Target_Density, plot_data$TPR, 
+       type = "b", pch = 19, col = "green", lwd = 2,
+       xlab = "Target Density", ylab = "True Positive Rate (TPR)",
+       main = "TPR vs Target Density",
+       ylim = c(0, 1))
+  
+  # 3. TNR vs target density
+  plot(plot_data$Target_Density, plot_data$TNR, 
+       type = "b", pch = 19, col = "orange", lwd = 2,
+       xlab = "Target Density", ylab = "True Negative Rate (TNR)",
+       main = "TNR vs Target Density",
+       ylim = c(0, 1))
+  
+  # 4. F1 score vs target density
+  plot(plot_data$Target_Density, plot_data$F1, 
+       type = "b", pch = 19, col = "purple", lwd = 2,
+       xlab = "Target Density", ylab = "F1 Score",
+       main = "F1 Score vs Target Density",
+       ylim = c(0, 1))
+  
+  # 5. MAD vs target density
+  plot(plot_data$Target_Density, plot_data$MAD, 
+       type = "b", pch = 19, col = "red", lwd = 2,
+       xlab = "Target Density", ylab = "Mean Absolute Deviation (MAD)",
+       main = "MAD vs Target Density")
+  
+  # 6. Recovery rate vs F1 score
+  plot(plot_data$Recovery_Rate, plot_data$F1, 
+       type = "b", pch = 19, col = "blue", lwd = 2,
+       xlab = "Recovery Rate", ylab = "F1 Score",
+       main = "Recovery Rate vs F1 Score",
+       xlim = c(0, 1), ylim = c(0, 1))
+  abline(a = 0, b = 1, lty = 2, col = "gray")
+  
+  # 7. TPR vs TNR
+  plot(plot_data$TPR, plot_data$TNR, 
+       type = "b", pch = 19, col = "green", lwd = 2,
+       xlab = "True Positive Rate (TPR)", ylab = "True Negative Rate (TNR)",
+       main = "TPR vs TNR",
+       xlim = c(0, 1), ylim = c(0, 1))
+  abline(h = 0.5, v = 0.5, lty = 2, col = "gray")
+  
+  # 8. Recovery rate vs MAD
+  plot(plot_data$Recovery_Rate, plot_data$MAD, 
+       type = "b", pch = 19, col = "red", lwd = 2,
+       xlab = "Recovery Rate", ylab = "Mean Absolute Deviation (MAD)",
+       main = "Recovery Rate vs MAD")
+  
+  # 9. Target vs actual density
+  plot(plot_data$Target_Density, plot_data$Actual_Density, 
+       type = "b", pch = 19, col = "orange", lwd = 2,
+       xlab = "Target Density", ylab = "Actual Density",
+       main = "Target vs Actual Density")
+  abline(a = 0, b = 1, col = "red", lty = 2, lwd = 2)
+  
+  par(mfrow = c(1, 1))
+  
+  # Output results
+  cat("============================================\n")
+  cat("Fixed Node Count Study Results\n")
+  cat("============================================\n\n")
+  
+  results_df <- data.frame(
+    Target_Density = plot_data$Target_Density,
+    Actual_Density = round(plot_data$Actual_Density, 3),
+    Actual_Edges = round(plot_data$Actual_Edges, 1),
+    Recovery_Rate = round(plot_data$Recovery_Rate, 3),
+    TPR = round(plot_data$TPR, 3),
+    TNR = round(plot_data$TNR, 3),
+    F1_Score = round(plot_data$F1, 3),
+    MAD = round(plot_data$MAD, 3),
+    Standard_Error = round(plot_data$SE_Recovery, 3)
+  )
+  
+  print(results_df)
+  
+  # Analyze trends
+  if (nrow(plot_data) > 1) {
+    cat("\nTrend Analysis:\n")
+    cat("1. Density increased from", round(min(plot_data$Target_Density), 3), 
+        "to", round(max(plot_data$Target_Density), 3), "\n")
+    cat("2. Recovery rate range:", round(min(plot_data$Recovery_Rate), 3), 
+        "to", round(max(plot_data$Recovery_Rate), 3), "\n")
+    cat("3. F1 score range:", round(min(plot_data$F1, na.rm = TRUE), 3), 
+        "to", round(max(plot_data$F1, na.rm = TRUE), 3), "\n")
+    cat("4. TPR range:", round(min(plot_data$TPR, na.rm = TRUE), 3), 
+        "to", round(max(plot_data$TPR, na.rm = TRUE), 3), "\n")
+    cat("5. TNR range:", round(min(plot_data$TNR, na.rm = TRUE), 3), 
+        "to", round(max(plot_data$TNR, na.rm = TRUE), 3), "\n")
+    cat("6. MAD range:", round(min(plot_data$MAD, na.rm = TRUE), 3), 
+        "to", round(max(plot_data$MAD, na.rm = TRUE), 3), "\n")
+    
+    # Calculate rate of change
+    if (nrow(plot_data) >= 2) {
+      initial_rate <- plot_data$Recovery_Rate[1]
+      final_rate <- plot_data$Recovery_Rate[nrow(plot_data)]
+      change_rate <- (final_rate - initial_rate) / initial_rate * 100
+      cat("7. Recovery rate change percentage:", round(change_rate, 2), "%\n")
+      
+      # Check correlation between density and various metrics
+      cat("\nCorrelations with Target Density:\n")
+      metrics_to_check <- c("Recovery_Rate", "TPR", "TNR", "F1", "MAD")
+      for (metric in metrics_to_check) {
+        if (metric %in% names(plot_data)) {
+          cor_val <- cor(plot_data$Target_Density, plot_data[[metric]], use = "complete.obs")
+          cat(paste0("  - Target Density vs ", metric, ": ", round(cor_val, 3), "\n"))
+        }
+      }
+      
+      # Check trade-off between TPR and TNR
+      tpr_tnr_cor <- cor(plot_data$TPR, plot_data$TNR, use = "complete.obs")
+      cat("8. Correlation between TPR and TNR:", round(tpr_tnr_cor, 3), "\n")
+    }
+  }
+  
+  return(list(
+    results_table = results_df,
+    plot_data = plot_data
+  ))
+}
+
+# ============================================
+# 10. Main Execution Programs
+# ============================================
+
+# Main function: Network structure study
+main_network_structure_study <- function() {
+  cat("============================================\n")
+  cat("Study: Impact of Network Structure on Recovery Rate\n")
+  cat("============================================\n\n")
+  
+  # Set random seed for reproducibility
+  set.seed(123)
+  
+  # Step 1: Run main study
+  cat("Step 1: Running network structure study...\n")
+  cat("Note: This may take considerable time, please wait patiently...\n")
+  
+  results <- conduct_network_structure_study(
+    n_networks = 8,      # Study 8 network structures
+    n_nodes = 20,        # 20 nodes per network
+    n_repetitions = 3    # 3 repetitions per structure
+  )
+  
+  # Step 2: Analysis and visualization
+  cat("\nStep 2: Analysis and visualization...\n")
+  analysis_results <- analyze_and_visualize_results(results)
+  
+  # Step 3: Save results
+  save(results, analysis_results, 
+       file = "network_structure_study_results.RData")
+  
+  cat("\nResults saved to network_structure_study_results.RData\n")
+  
+  return(list(results = results, analysis = analysis_results))
+}
+
+# Main function: Sample size study
+main_sample_size_study <- function() {
+  cat("============================================\n")
+  cat("Study: Impact of Sample Size on Network Recovery Rate\n")
+  cat("============================================\n\n")
+  
+  # Set random seed for reproducibility
+  set.seed(123)
+  
+  # Step 1: Run sample size study
+  cat("Step 1: Running sample size study...\n")
+  cat("Note: This may take considerable time, please wait patiently...\n")
+  
+  # Study sample size effect on random networks
+  sample_size_results <- conduct_sample_size_study(
+    network_type = "ER",
+    network_params = list(p = 0.3),
+    sample_sizes = c(10, 15, 20, 25, 30),
+    n_repetitions = 3
+  )
+  
+  # Step 2: Analysis and visualization
+  cat("\nStep 2: Analysis and visualization...\n")
+  
+  # Create a simplified visualization for sample size study
+  visualize_sample_size_results <- function(sample_size_results) {
+    par(mfrow = c(2, 3), mar = c(5, 4, 4, 2))
+    
+    # Recovery rate vs sample size
+    plot(sample_size_results$sample_sizes, sample_size_results$avg_recovery_rates,
+         type = "b", pch = 19, col = "blue", lwd = 2,
+         xlab = "Sample Size (Nodes)", ylab = "Average Recovery Rate",
+         main = "Recovery Rate vs Sample Size",
+         ylim = c(0, 1))
+    
+    # TPR vs sample size
+    plot(sample_size_results$sample_sizes, sample_size_results$avg_TPRs,
+         type = "b", pch = 19, col = "green", lwd = 2,
+         xlab = "Sample Size (Nodes)", ylab = "True Positive Rate (TPR)",
+         main = "TPR vs Sample Size",
+         ylim = c(0, 1))
+    
+    # TNR vs sample size
+    plot(sample_size_results$sample_sizes, sample_size_results$avg_TNRs,
+         type = "b", pch = 19, col = "orange", lwd = 2,
+         xlab = "Sample Size (Nodes)", ylab = "True Negative Rate (TNR)",
+         main = "TNR vs Sample Size",
+         ylim = c(0, 1))
+    
+    # F1 score vs sample size
+    plot(sample_size_results$sample_sizes, sample_size_results$avg_F1s,
+         type = "b", pch = 19, col = "purple", lwd = 2,
+         xlab = "Sample Size (Nodes)", ylab = "F1 Score",
+         main = "F1 Score vs Sample Size",
+         ylim = c(0, 1))
+    
+    # MAD vs sample size
+    plot(sample_size_results$sample_sizes, sample_size_results$avg_MADs,
+         type = "b", pch = 19, col = "red", lwd = 2,
+         xlab = "Sample Size (Nodes)", ylab = "Mean Absolute Deviation (MAD)",
+         main = "MAD vs Sample Size")
+    
+    # TPR vs TNR
+    plot(sample_size_results$avg_TPRs, sample_size_results$avg_TNRs,
+         type = "b", pch = 19, col = "blue", lwd = 2,
+         xlab = "True Positive Rate (TPR)", ylab = "True Negative Rate (TNR)",
+         main = "TPR vs TNR across Sample Sizes",
+         xlim = c(0, 1), ylim = c(0, 1))
+    abline(h = 0.5, v = 0.5, lty = 2, col = "gray")
+    
+    par(mfrow = c(1, 1))
+    
+    # Print summary
+    cat("\nSample Size Study Summary:\n")
+    summary_df <- data.frame(
+      Sample_Size = sample_size_results$sample_sizes,
+      Recovery_Rate = round(sample_size_results$avg_recovery_rates, 3),
+      TPR = round(sample_size_results$avg_TPRs, 3),
+      TNR = round(sample_size_results$avg_TNRs, 3),
+      F1_Score = round(sample_size_results$avg_F1s, 3),
+      MAD = round(sample_size_results$avg_MADs, 3)
+    )
+    print(summary_df)
+    
+    return(summary_df)
+  }
+  
+  visualization_results <- visualize_sample_size_results(sample_size_results)
+  
+  # Step 3: Save results
+  save(sample_size_results, visualization_results, 
+       file = "sample_size_study_results.RData")
+  
+  cat("\nResults saved to sample_size_study_results.RData\n")
+  
+  return(list(results = sample_size_results, visualization = visualization_results))
+}
+
+# Main function: Fixed edges, varying nodes study
+main_fixed_edges_vary_nodes_study <- function() {
+  cat("============================================\n")
+  cat("Study: Fixed Edge Count with Varying Node Count\n")
+  cat("============================================\n\n")
+  
+  # Set random seed for reproducibility
+  set.seed(123)
+  
+  # Step 1: Run fixed edges study
+  cat("Step 1: Running fixed edges with varying nodes study...\n")
+  cat("Note: This may take considerable time, please wait patiently...\n")
+  
+  # Study ER networks with fixed edges
+  fixed_edges_results <- conduct_fixed_edges_vary_nodes_study(
+    network_type = "ER",
+    target_edges = 50,
+    node_counts = c(15, 20, 25, 30, 35, 40),
+    n_repetitions = 3
+  )
+  
+  # Step 2: Analysis and visualization
+  cat("\nStep 2: Analysis and visualization...\n")
+  visualization_results <- visualize_fixed_edges_vary_nodes(fixed_edges_results)
+  
+  # Step 3: Save results
+  save(fixed_edges_results, visualization_results, 
+       file = "fixed_edges_vary_nodes_results.RData")
+  
+  cat("\nResults saved to fixed_edges_vary_nodes_results.RData\n")
+  
+  return(list(results = fixed_edges_results, visualization = visualization_results))
+}
+
+# Main function: Fixed nodes, varying edges study
+main_fixed_nodes_vary_edges_study <- function() {
+  cat("============================================\n")
+  cat("Study: Fixed Node Count with Varying Edge Count\n")
+  cat("============================================\n\n")
+  
+  # Set random seed for reproducibility
+  set.seed(123)
+  
+  # Step 1: Run fixed nodes study
+  cat("Step 1: Running fixed nodes with varying edges study...\n")
+  cat("Note: This may take considerable time, please wait patiently...\n")
+  
+  # Study ER networks with fixed nodes
+  fixed_nodes_results <- conduct_fixed_nodes_vary_edges_study(
+    network_type = "ER",
+    fixed_nodes = 30,
+    edge_densities = c(0.1, 0.2, 0.3, 0.4, 0.5),
+    n_repetitions = 3
+  )
+  
+  # Step 2: Analysis and visualization
+  cat("\nStep 2: Analysis and visualization...\n")
+  visualization_results <- visualize_fixed_nodes_vary_edges(fixed_nodes_results)
+  
+  # Step 3: Save results
+  save(fixed_nodes_results, visualization_results, 
+       file = "fixed_nodes_vary_edges_results.RData")
+  
+  cat("\nResults saved to fixed_nodes_vary_edges_results.RData\n")
+  
+  return(list(results = fixed_nodes_results, visualization = visualization_results))
+}
+
+# ============================================
+# 11. Quick Test Functions
+# ============================================
+
+# Quick test single network type
+quick_test_single_network <- function() {
+  cat("Quick test single network recovery...\n")
+  
+  # Test BA network
+  n_nodes <- 15
+  G_true <- generate_BA_network(n_nodes, m = 2)
+  
+  cat("Generated BA network, node count:", n_nodes, ", m=2\n")
+  
+  # Check network
+  cat("Network edge count:", sum(G_true)/2, "\n")
+  
+  # Run network recovery
+  result <- tryCatch({
+    run_network_recovery(G_true, n_lambda = 5)  # Use fewer lambdas to speed up
+  }, error = function(e) {
+    cat("Network recovery failed:", e$message, "\n")
+    return(NULL)
+  })
+  
+  if (!is.null(result)) {
+    cat("\nRecovery Results:\n")
+    cat("Recovery rate:", round(result$correct_rate, 3), "\n")
+    cat("True Positive Rate (TPR):", round(result$TPR, 3), "\n")
+    cat("True Negative Rate (TNR):", round(result$TNR, 3), "\n")
+    cat("F1 Score:", round(result$F1, 3), "\n")
+    cat("Mean Absolute Deviation (MAD):", round(result$MAD, 3), "\n")
+    cat("Best lambda:", round(result$best_lambda, 3), "\n")
+    
+    cat("\nConfusion Matrix:\n")
+    cat("True Positives (TP):", result$confusion_matrix$TP, "\n")
+    cat("True Negatives (TN):", result$confusion_matrix$TN, "\n")
+    cat("False Positives (FP):", result$confusion_matrix$FP, "\n")
+    cat("False Negatives (FN):", result$confusion_matrix$FN, "\n")
+    
+    # Calculate some basic features
+    features <- extract_network_features(G_true)
+    cat("\nNetwork features:\n")
+    cat("  Density:", round(features$density, 3), "\n")
+    cat("  Average degree:", round(features$avg_degree, 3), "\n")
+    cat("  Clustering coefficient:", round(features$clustering_coef, 3), "\n")
+    cat("  Degree variance:", round(features$degree_variance, 3), "\n")
+    
+    # Compare true and estimated networks
+    cat("\nNetwork comparison:\n")
+    cat("  True network edge count:", sum(G_true)/2, "\n")
+    cat("  Estimated network edge count:", sum(result$G_est)/2, "\n")
+    cat("  Correctly recovered edges:", sum(G_true & result$G_est)/2, "\n")
+  } else {
+    cat("Test failed\n")
+  }
+  
+  return(result)
+}
+
+# ============================================
+# 12. Usage Instructions and Execution
+# ============================================
+
+cat("\nNetwork Structure Impact on Recovery Rate Study Code\n")
+cat("============================================\n")
+cat("Main Improvements:\n")
+cat("1. Fixed BA network generation error\n")
+cat("2. Reduced optimization loop count for speed\n")
+cat("3. Added tree network type\n")
+cat("4. Maintained 11 lambda values\n")
+cat("5. Added sample size study\n")
+cat("6. ADDED: Fixed edges with varying nodes study\n")
+cat("7. ADDED: Fixed nodes with varying edges study\n")
+cat("8. ADDED: True Positive Rate (TPR), True Negative Rate (TNR), F1 Score, and Mean Absolute Deviation (MAD)\n\n")
+
+cat("New Metrics Added:\n")
+cat("- True Positive Rate (TPR): TP / (TP + FN) - Sensitivity\n")
+cat("- True Negative Rate (TNR): TN / (TN + FP) - Specificity\n")
+cat("- F1 Score: 2 * (Precision * Recall) / (Precision + Recall)\n")
+cat("- Mean Absolute Deviation (MAD): Average absolute difference between true and estimated edges\n\n")
+
+cat("Usage:\n")
+cat("1. quick_test_single_network() - Quick test single network (with new metrics)\n")
+cat("2. main_network_structure_study() - Run network structure study (with new metrics)\n")
+cat("3. main_sample_size_study() - Run sample size study (with new metrics)\n")
+cat("4. main_fixed_edges_vary_nodes_study() - Run fixed edges with varying nodes study\n")
+cat("5. main_fixed_nodes_vary_edges_study() - Run fixed nodes with varying edges study\n")
+cat("6. Exit\n\n")
+
+# If running script directly, provide choices
+if (interactive()) {
+  cat("Please select operation to execute:\n")
+  cat("1. Quick test single network (test BA network with new metrics)\n")
+  cat("2. Run network structure study (with new metrics)\n")
+  cat("3. Run sample size study (with new metrics)\n")
+  cat("4. Run fixed edges with varying nodes study\n")
+  cat("5. Run fixed nodes with varying edges study\n")
+  cat("6. Exit\n")
+  
+  choice <- readline(prompt = "Enter option (1, 2, 3, 4, 5, or 6): ")
+  
+  if (choice == "1") {
+    quick_test_single_network()
+  } else if (choice == "2") {
+    main_network_structure_study()
+  } else if (choice == "3") {
+    main_sample_size_study()
+  } else if (choice == "4") {
+    main_fixed_edges_vary_nodes_study()
+  } else if (choice == "5") {
+    main_fixed_nodes_vary_edges_study()
+  } else {
+    cat("Exiting program.\n")
+  }
+}
