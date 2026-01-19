@@ -32,37 +32,59 @@ install.packages(c("MASS", "parallel", "ggplot2", "gridExtra"))
 
 📁 5. Project Structure
 ├── Network Generation Functions
+
 │   ├── generate_ER_network()      # Random networks
+
 │   ├── generate_WS_network()      # Small-world networks
-│   ├── generate_BA_network()      # Scale-free networks (fixed version)
+
+│   ├── generate_BA_network()      # Scale-free networks
+
 │   ├── generate_community_network() # Community networks
+
 │   └── [Additional network types...]
+
 │
 ├── Network Recovery Algorithm
 │   ├── f_function()              # Primary objective function
+
 │   ├── ff_function()             # Threshold optimization function
+
 │   ├── calculate_metrics()       # Comprehensive performance evaluation
+
 │   └── run_network_recovery()    # Main recovery pipeline
+
 │
 ├── Network Feature Extraction
 │   └── extract_network_features() # Computes topological characteristics
 │
+
 ├── Research Studies
 │   ├── conduct_network_structure_study()    # Impact of network topology
+
 │   ├── conduct_sample_size_study()          # Effect of node count
+
 │   ├── conduct_fixed_edges_vary_nodes_study() # Fixed edges, varying nodes
+
 │   └── conduct_fixed_nodes_vary_edges_study() # Fixed nodes, varying density
+
 │
 ├── Visualization & Analysis
 │   ├── analyze_and_visualize_results()      # Multi-figure analysis
+
 │   ├── visualize_fixed_edges_vary_nodes()   # Fixed-edge study plots
+
 │   └── visualize_fixed_nodes_vary_edges()   # Fixed-node study plots
+
 │
 └── Main Execution Functions
     ├── main_network_structure_study()       # Primary study runner
+    
     ├── main_sample_size_study()             # Sample size analysis
+    
     ├── main_fixed_edges_vary_nodes_study()  # Fixed-edge analysis
+    
     └── main_fixed_nodes_vary_edges_study()  # Fixed-node analysis
+    
 
 🎯 6. Usage Examples
 # Test network recovery on a single scale-free network
