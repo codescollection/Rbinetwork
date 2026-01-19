@@ -77,7 +77,6 @@ install.packages(c("MASS", "parallel", "ggplot2", "gridExtra"))
 │   ├── visualize_fixed_edges_vary_nodes()   # Fixed-edge study plots
 
 │   └── visualize_fixed_nodes_vary_edges()   # Fixed-node study plots
-
 │
 └── Main Execution Functions
 
@@ -91,19 +90,19 @@ install.packages(c("MASS", "parallel", "ggplot2", "gridExtra"))
     
 
 🎯 6. Usage Examples
-# Test network recovery on a single scale-free network
+#Test network recovery on a single scale-free network
 result <- quick_test_single_network()
 
-# Compare recovery rates across 8 different network types
+#Compare recovery rates across 8 different network types
 study_results <- main_network_structure_study()
 
-# Analyze how node count affects recovery accuracy
+#Analyze how node count affects recovery accuracy
 sample_results <- main_sample_size_study()
 
-# Investigate recovery with constant edges but varying nodes
+#Investigate recovery with constant edges but varying nodes
 fixed_edges_results <- main_fixed_edges_vary_nodes_study()
 
-# Examine density effects with constant node count
+#Examine density effects with constant node count
 fixed_nodes_results <- main_fixed_nodes_vary_edges_study()
 
 📊 7. Primary Outputs
