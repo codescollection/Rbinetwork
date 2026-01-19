@@ -74,7 +74,6 @@ install.packages(c("MASS", "parallel", "ggplot2", "gridExtra"))
 │   └── extract_network_features() # Computes topological characteristics
 
 │
-
 ├── Research Studies
 
 │   ├── conduct_network_structure_study()    # Impact of network topology
