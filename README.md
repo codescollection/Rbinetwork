@@ -32,9 +32,7 @@ install.packages(c("MASS", "parallel", "ggplot2", "gridExtra"))
 
 📁 5. Project Structure
 ├── Network Generation Functions
-
 │   ├── generate_ER_network()      # Random networks
-
 │   ├── generate_WS_network()      # Small-world networks
 │   ├── generate_BA_network()      # Scale-free networks (fixed version)
 │   ├── generate_community_network() # Community networks
