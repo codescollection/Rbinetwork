@@ -7,8 +7,8 @@ Unlike conventional social network analysis—which typically relies on self-rep
 To implement our package, please load the R packages "MASS", “parallel”， “ggplot2"，“gridExtra”， “glmnet", "igraph" and "ivreg" before you running the codes. (For questions or issues, please open an issue on GitHub or contact the maintainer.)
 
 
-######################################################################################################################################################
-######################################################################################################################################################
+#########################################################
+#########################################################
 
 Codes Intrudoction
 
