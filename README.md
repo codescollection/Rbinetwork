@@ -11,8 +11,7 @@ school. Nodes represent students; red circles denote bullies and blue squares de
 proportional to degree centrality. Isolated nodes indicate students with no recovered influence
 links.)
 
-To implement our package, please load the R packages "MASS", “parallel”， “ggplot2"，“gridExtra”， “glmnet", "igraph" and "ivreg" before you running the codes. (For questions or issues, please open an issue on GitHub or contact the maintainer.)
-
+To implement our package, please load the R packages "MASS", “parallel”， “ggplot2"，“gridExtra”， “glmnet", "igraph" and "ivreg" before you running the codes. 
 
 ############################################################################
 ############################################################################
@@ -91,6 +90,7 @@ install.packages(c("MASS", "parallel", "ggplot2", "gridExtra"))
 │   ├── visualize_fixed_edges_vary_nodes()   # Fixed-edge study plots
 
 │   └── visualize_fixed_nodes_vary_edges()   # Fixed-node study plots
+
 │
 └── Main Execution Functions
 
@@ -302,4 +302,5 @@ Convergence: Optimization may occasionally fail to converge; results include err
 Determinism: Random network generation requires set.seed() for reproducibility
 
 
+(For questions or issues, please open an issue on GitHub or contact the maintainer.)
 
