@@ -4,6 +4,13 @@ Rbinetwork is an R package designed to recover latent behavioral influence netwo
 
 Unlike conventional social network analysis—which typically relies on self-reported friendship ties that are costly to collect and prone to measurement error—Rbinetwork provides a novel methodology to infer genuine influence relationships without requiring prior network data. It accommodates both cross‑sectional and longitudinal observation schemes, though the current repository demonstrates implementation for cross‑sectional settings. While the underlying algorithms deliver high estimation accuracy, they are computationally intensive on standard personal computers due to the iterative large‑scale matrix operations involved. Therefore, we have designed parallel computation procedures to improve computational efficiency. We also recommend executing the procedures on high‑performance computing (HPC) platforms, such as supercomputers or computational clusters with high-level CPU cores, to achieve feasible runtimes.
 
+<img width="1528" height="514" alt="recovered behavioral influence networks" src="https://github.com/user-attachments/assets/5d67d866-92cf-4227-b9b7-1642efccd783" />
+(Recovered bullying influence networks for nine schools by the SML algorithm.
+Each panel displays the bullying influence network recovered by Algorithm SML for one
+school. Nodes represent students; red circles denote bullies and blue squares denote non-bullies. Directed edges indicate estimated behavioral influence relations. Node size is
+proportional to degree centrality. Isolated nodes indicate students with no recovered influence
+links.)
+
 To implement our package, please load the R packages "MASS", “parallel”， “ggplot2"，“gridExtra”， “glmnet", "igraph" and "ivreg" before you running the codes. (For questions or issues, please open an issue on GitHub or contact the maintainer.)
 
 
@@ -294,13 +301,5 @@ Convergence: Optimization may occasionally fail to converge; results include err
 
 Determinism: Random network generation requires set.seed() for reproducibility
 
-
-
-<img width="1528" height="514" alt="recovered behavioral influence networks" src="https://github.com/user-attachments/assets/5d67d866-92cf-4227-b9b7-1642efccd783" />
-(Recovered bullying influence networks for nine schools by the SML algorithm.
-Each panel displays the bullying influence network recovered by Algorithm SML for one
-school. Nodes represent students; red circles denote bullies and blue squares denote non-bullies. Directed edges indicate estimated behavioral influence relations. Node size is
-proportional to degree centrality. Isolated nodes indicate students with no recovered influence
-links.)
 
 
