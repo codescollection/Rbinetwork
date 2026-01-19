@@ -70,6 +70,7 @@ install.packages(c("MASS", "parallel", "ggplot2", "gridExtra"))
 
 │
 ├── Network Feature Extraction
+
 │   └── extract_network_features() # Computes topological characteristics
 │
 
