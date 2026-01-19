@@ -111,14 +111,14 @@ visualize_example_networks <- function() {
   delta_values <- c(0.9, 0.5, 0.1)
   max_allowed_degrees <- floor(1 / delta_values)
   
-  # 创建一个新的布局：3个网络图在左侧，右侧留出空间放图例
+  # Create a new layout: position three network plots on the left side, leaving space on the right for a legend
   layout_matrix <- matrix(c(1, 1, 1, 2, 2, 2, 3, 3, 3, 4), 
                           nrow = 1, ncol = 10)
   
-  # 设置图形布局
+  # Set the graphic layout
   layout(layout_matrix, widths = c(3, 3, 3, 1))
   
-  # 为每个网络图设置边距
+  # Set margins for each network graph
   for (i in 1:length(delta_values)) {
     delta <- delta_values[i]
     max_degree <- max_allowed_degrees[i]
@@ -143,7 +143,7 @@ visualize_example_networks <- function() {
     # Determine if condition is satisfied
     condition_satisfied <- actual_max_degree <= max_degree
     
-    # 为当前图形设置边距
+    # Set the margins for the current graph
     if (i == 1) {
       par(mar = c(3, 3, 4, 1))
     } else if (i == 2) {
@@ -167,7 +167,7 @@ visualize_example_networks <- function() {
          layout = layout_with_fr,
          margin = 0)
     
-    # 保存信息供图例使用
+    # preserving the information for use in the legend
     assign(paste0("info", i), 
            list(delta = delta,
                 max_degree = max_degree,
@@ -175,12 +175,12 @@ visualize_example_networks <- function() {
                 condition_satisfied = condition_satisfied))
   }
   
-  # 在右侧第四个区域添加所有图例
+  # Add all legends to the fourth area on the right
   par(mar = c(0, 0, 0, 0))
   plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", 
        xlim = c(0, 1), ylim = c(0, 1))
   
-  # 创建图例文本和颜色
+  # Create legend text and colors
   all_legends <- list()
   all_colors <- list()
   
@@ -207,11 +207,11 @@ visualize_example_networks <- function() {
     )
   }
   
-  # 合并所有图例
+  # Combine all legends
   final_legend <- unlist(all_legends)
   final_colors <- unlist(all_colors)
   
-  # 添加图例
+  # Add legend
   legend("center", 
          legend = final_legend,
          text.col = final_colors,
@@ -221,12 +221,12 @@ visualize_example_networks <- function() {
          xpd = TRUE,
          ncol = 1)
   
-  # 添加整体标题
+  # Add an overall title
   par(oma = c(0, 0, 2, 0))
   title(main = "Example Networks for Different δ Values", 
         outer = TRUE, cex.main = 1.5, font.main = 2)
   
-  # 重置图形参数
+  # Reset graphical parameters
   par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)
   layout(1)
 }
