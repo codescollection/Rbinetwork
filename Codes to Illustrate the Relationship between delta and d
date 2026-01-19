@@ -1,0 +1,380 @@
+
+
+
+
+# Load necessary packages
+library(igraph)
+
+# Set random seed for reproducibility
+set.seed(123)
+
+# 1. Create different network structures
+create_network <- function(type = "tree", N = 12) {
+  if (type == "tree") {
+    g <- make_tree(N, children = 2, mode = "undirected")
+  } else if (type == "ring") {
+    g <- make_ring(N, directed = FALSE)
+  } else if (type == "star") {
+    g <- make_star(N, mode = "undirected")
+  } else if (type == "grid") {
+    side <- ceiling(sqrt(N))
+    g <- make_lattice(dimvector = c(side, side))
+  } else {
+    g <- sample_gnp(N, p = 0.2, directed = FALSE)
+  }
+  return(g)
+}
+
+# 2. Visualize the trade-off between network sparsity and peer effect strength
+visualize_delta_degree_tradeoff <- function() {
+  # Create data
+  max_degrees <- 1:20
+  allowed_deltas <- 1 / max_degrees
+  
+  # Create data frame
+  df <- data.frame(
+    Max_Degree = max_degrees,
+    Allowed_Delta = allowed_deltas
+  )
+  
+  # Key points for different network types
+  key_points <- data.frame(
+    degree = c(1, 2, 3, 5, 10, 20),
+    delta = 1 / c(1, 2, 3, 5, 10, 20),
+    label = c("Chain", "Ring", "Tree", 
+              "Sparse social", "Moderate social", "Dense social"),
+    network_type = c("Chain network", "Ring network", "Tree network", 
+                     "Sparse social network", "Moderate social network", "Dense social network")
+  )
+  
+  # Create graphical device with larger margins
+  par(mar = c(6, 6, 5, 5))
+  
+  # Create empty plot with larger fonts
+  plot(df$Max_Degree, df$Allowed_Delta, type = "l", 
+       lwd = 4, col = "blue",
+       xlab = "Maximum Network Degree (d_max)",
+       ylab = "Maximum Allowed Peer Effect Strength (|δ|)",
+       main = "Trade-off: Network Sparsity vs. Allowed Peer Effect Strength",
+       cex.lab = 1.5, cex.main = 1.8, cex.axis = 1.2,
+       xlim = c(0, 21), ylim = c(0, 1.1),
+       xaxs = "i", yaxs = "i")
+  
+  # Add grid
+  grid(col = "gray80", lty = 2)
+  
+  # Add key points
+  points(key_points$degree, key_points$delta, 
+         pch = 19, col = "red", cex = 2.5)
+  
+  # Add key point labels - moved slightly to avoid overlap
+  text(key_points$degree, key_points$delta + 0.06,  # Increased from 0.05 to 0.06
+       key_points$label, cex = 1.2, col = "darkred", font = 2)
+  
+  # Add constraint condition - moved to avoid overlap with blue line
+  text(15, 0.95,  # Moved from 0.9 to 0.95 (higher)
+       expression(paste("Constraint: |", delta, "| < ", frac(1, d[max]))),
+       cex = 1.5, col = "darkblue", font = 2, bg = "white")  # Added white background
+  
+  # Add interpretation text - moved to avoid overlap
+  text(15, 0.78,  # Moved from 0.75 to 0.78
+       "TRADE-OFF:\nDenser networks require\nweaker peer effects",
+       cex = 1.3, col = "darkblue", font = 2, bg = "white")  # Added white background
+  
+  # Add arrows for explanation
+  arrows(15, 0.73, 18, 0.12, length = 0.15, col = "darkgreen", lwd = 3)  # Adjusted end point
+  arrows(5, 0.22, 2, 0.52, length = 0.15, col = "darkgreen", lwd = 3)  # Adjusted end point
+  
+  text(18, 0.05, "Dense networks\nrequire weak δ", 
+       cex = 1.1, col = "darkgreen", font = 2, bg = "white")  # Added white background
+  text(2, 0.58, "Sparse networks\nallow strong δ",  # Moved from 0.55 to 0.58
+       cex = 1.1, col = "darkgreen", font = 2, bg = "white")  # Added white background
+  
+  # Add legend with larger font - moved to top left to avoid overlap
+  legend("topleft", 
+         legend = c("Theoretical limit", "Example network types"),
+         col = c("blue", "red"),
+         lty = c(1, NA),
+         pch = c(NA, 19),
+         lwd = c(4, NA),
+         pt.cex = c(NA, 2),
+         bg = "white", box.col = "gray", cex = 1.3)
+  
+  # Add explanation at bottom
+  mtext("For system stability: Sparse networks (low degree) can tolerate stronger peer effects (larger δ)",
+        side = 1, line = 4, cex = 1.1, col = "darkblue", font = 2)
+}
+
+# 3. Create example networks with different δ values
+visualize_example_networks <- function() {
+  # Define δ values and corresponding maximum allowed degrees
+  delta_values <- c(0.9, 0.5, 0.1)
+  max_allowed_degrees <- floor(1 / delta_values)
+  
+  # 创建一个新的布局：3个网络图在左侧，右侧留出空间放图例
+  layout_matrix <- matrix(c(1, 1, 1, 2, 2, 2, 3, 3, 3, 4), 
+                          nrow = 1, ncol = 10)
+  
+  # 设置图形布局
+  layout(layout_matrix, widths = c(3, 3, 3, 1))
+  
+  # 为每个网络图设置边距
+  for (i in 1:length(delta_values)) {
+    delta <- delta_values[i]
+    max_degree <- max_allowed_degrees[i]
+    
+    # Create appropriate network for this δ value
+    if (delta == 0.9) {
+      # For δ=0.9, max degree=1, create a chain
+      g <- make_ring(12, directed = FALSE)
+      # Remove edges to create a chain
+      g <- delete_edges(g, E(g)[1:10])  # Keep only 1 edge per node
+    } else if (delta == 0.5) {
+      # For δ=0.5, max degree=2, create a ring or tree
+      g <- make_tree(12, children = 2, mode = "undirected")
+    } else {  # delta == 0.1
+      # For δ=0.1, max degree=10, create a denser network
+      g <- sample_gnp(12, p = 0.3, directed = FALSE)
+    }
+    
+    # Calculate actual max degree
+    actual_max_degree <- max(degree(g))
+    
+    # Determine if condition is satisfied
+    condition_satisfied <- actual_max_degree <= max_degree
+    
+    # 为当前图形设置边距
+    if (i == 1) {
+      par(mar = c(3, 3, 4, 1))
+    } else if (i == 2) {
+      par(mar = c(3, 1, 4, 1))
+    } else {
+      par(mar = c(3, 1, 4, 1))
+    }
+    
+    # Plot network
+    plot(g, 
+         main = sprintf("δ = %.1f\nMax allowed degree: %d", delta, max_degree),
+         vertex.color = ifelse(condition_satisfied, "lightgreen", "lightcoral"),
+         vertex.size = 15,
+         vertex.label = degree(g),
+         vertex.label.cex = 0.9,
+         vertex.label.color = "black",
+         vertex.frame.color = "white",
+         edge.color = ifelse(condition_satisfied, "darkgreen", "red"),
+         edge.width = 1.5,
+         edge.curved = 0.2,
+         layout = layout_with_fr,
+         margin = 0)
+    
+    # 保存信息供图例使用
+    assign(paste0("info", i), 
+           list(delta = delta,
+                max_degree = max_degree,
+                actual_max_degree = actual_max_degree,
+                condition_satisfied = condition_satisfied))
+  }
+  
+  # 在右侧第四个区域添加所有图例
+  par(mar = c(0, 0, 0, 0))
+  plot(1, type = "n", axes = FALSE, xlab = "", ylab = "", 
+       xlim = c(0, 1), ylim = c(0, 1))
+  
+  # 创建图例文本和颜色
+  all_legends <- list()
+  all_colors <- list()
+  
+  for (i in 1:length(delta_values)) {
+    info <- get(paste0("info", i))
+    all_legends[[i]] <- c(
+      sprintf("Network %d:", i),
+      sprintf("δ = %.1f", info$delta),
+      sprintf("Allowed max deg: %d", info$max_degree),
+      sprintf("Actual max deg: %d", info$actual_max_degree),
+      ifelse(info$condition_satisfied, 
+             "✓ Condition satisfied", 
+             "✗ Condition not satisfied"),
+      ""
+    )
+    
+    all_colors[[i]] <- c(
+      "black",
+      "blue",
+      "darkblue",
+      "black",
+      ifelse(info$condition_satisfied, "darkgreen", "red"),
+      "white"
+    )
+  }
+  
+  # 合并所有图例
+  final_legend <- unlist(all_legends)
+  final_colors <- unlist(all_colors)
+  
+  # 添加图例
+  legend("center", 
+         legend = final_legend,
+         text.col = final_colors,
+         bg = "white", 
+         box.col = "gray", 
+         cex = 0.9,
+         xpd = TRUE,
+         ncol = 1)
+  
+  # 添加整体标题
+  par(oma = c(0, 0, 2, 0))
+  title(main = "Example Networks for Different δ Values", 
+        outer = TRUE, cex.main = 1.5, font.main = 2)
+  
+  # 重置图形参数
+  par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)
+  layout(1)
+}
+
+# 4. Create a comparison of different network structures
+visualize_network_comparison <- function() {
+  # Define network types to compare
+  network_types <- c("tree", "ring", "grid", "star")
+  network_names <- c("Tree Network", "Ring Network", "Grid Network", "Star Network")
+  
+  # Calculate for each network
+  results <- data.frame()
+  
+  for (i in 1:length(network_types)) {
+    g <- create_network(network_types[i], N = 12)
+    max_deg <- max(degree(g))
+    allowed_delta <- 1 / max_deg
+    
+    results <- rbind(results, data.frame(
+      Network = network_names[i],
+      Max_Degree = max_deg,
+      Allowed_Delta = allowed_delta,
+      Peer_Effect = ifelse(allowed_delta > 0.5, "Very Strong",
+                          ifelse(allowed_delta > 0.3, "Strong",
+                                 ifelse(allowed_delta > 0.15, "Moderate", "Weak")))
+    ))
+  }
+  
+  # Create graphical layout
+  par(mfrow = c(2, 2), mar = c(3, 3, 4, 2), oma = c(0, 0, 3, 0))
+  
+  for (i in 1:length(network_types)) {
+    g <- create_network(network_types[i], N = 12)
+    max_deg <- max(degree(g))
+    allowed_delta <- 1 / max_deg
+    
+    # Plot network
+    plot(g, 
+         main = sprintf("%s", network_names[i]),
+         vertex.color = "lightblue",
+         vertex.size = 18,
+         vertex.label = degree(g),
+         vertex.label.cex = 1.0,
+         vertex.label.color = "black",
+         vertex.frame.color = "white",
+         edge.color = "steelblue",
+         edge.width = 1.5,
+         layout = if(network_types[i] == "star") layout_as_star else 
+                  if(network_types[i] == "grid") layout_on_grid else layout_with_fr)
+    
+    # Add network statistics in a box
+    legend("bottomright", 
+           legend = c(sprintf("Max degree: %d", max_deg),
+                     sprintf("Allowed δ: %.3f", allowed_delta),
+                     sprintf("Peer effect: %s", 
+                            ifelse(allowed_delta > 0.5, "Very Strong",
+                                  ifelse(allowed_delta > 0.3, "Strong",
+                                         ifelse(allowed_delta > 0.15, "Moderate", "Weak"))))),
+           bg = "white", box.col = "gray", cex = 0.9,
+           text.col = c("black", "blue", 
+                       ifelse(allowed_delta > 0.5, "darkgreen",
+                             ifelse(allowed_delta > 0.3, "green",
+                                    ifelse(allowed_delta > 0.15, "orange", "red")))))
+  }
+  
+  # Add overall title
+  mtext("Comparison of Network Structures and Their Allowed Peer Effect Strengths", 
+        side = 3, outer = TRUE, line = 0.5, cex = 1.5, font = 2)
+  
+  # Reset graphical parameters
+  par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)
+  
+  return(results)
+}
+
+# 5. Main function
+main <- function() {
+  cat("=== ANALYSIS: NETWORK SPARSITY VS. PEER EFFECT STRENGTH ===\n\n")
+  cat("Mathematical constraint: |δ| < 1/(maximum network degree)\n\n")
+  
+  cat("This analysis shows the fundamental trade-off between:\n")
+  cat("1. NETWORK CONNECTIVITY (degree) - how many connections each node has\n")
+  cat("2. PEER EFFECT STRENGTH (δ) - how strongly nodes influence each other\n\n")
+  
+  cat("Press Enter to visualize the trade-off curve...")
+  invisible(readline())
+  
+  # 1. Visualize trade-off curve
+  cat("\nGenerating trade-off visualization...\n")
+  visualize_delta_degree_tradeoff()
+  
+  # Wait for user input
+  cat("\nPress Enter to see example networks for different δ values...")
+  invisible(readline())
+  
+  # 2. Visualize example networks
+  cat("\nGenerating example networks...\n")
+  visualize_example_networks()
+  
+  # 3. Show network comparison
+  cat("\nPress Enter to compare different network structures...")
+  invisible(readline())
+  
+  cat("\nGenerating network comparison...\n")
+  network_results <- visualize_network_comparison()
+  
+  # Print results table
+  cat("\n=== NETWORK COMPARISON RESULTS ===\n\n")
+  cat("Network structures with N = 12 nodes:\n\n")
+  cat(sprintf("%-15s %-12s %-15s %-15s\n", 
+              "Network Type", "Max Degree", "Allowed δ", "Peer Effect"))
+  cat(paste(rep("-", 60), collapse = ""), "\n")
+  
+  for (i in 1:nrow(network_results)) {
+    cat(sprintf("%-15s %-12d %-15.3f %-15s\n", 
+                network_results$Network[i],
+                network_results$Max_Degree[i],
+                network_results$Allowed_Delta[i],
+                network_results$Peer_Effect[i]))
+  }
+  
+  # Final conclusions
+  cat("\n=== KEY CONCLUSIONS ===\n\n")
+  cat("1. CLEAR TRADE-OFF: There is an inverse relationship between:\n")
+  cat("   • Network degree (connectivity density)\n")
+  cat("   • Allowed peer effect strength (δ)\n\n")
+  
+  cat("2. MATHEMATICAL REASON: For the series G = Σ δ^(j-1)·W^j to converge:\n")
+  cat("   |δ|·ρ(W) < 1  and since ρ(W) ≤ d_max, we need |δ| < 1/d_max\n\n")
+  
+  cat("3. PRACTICAL IMPLICATIONS:\n")
+  cat("   • Small groups (families, teams): Can have strong peer effects\n")
+  cat("   • Large networks (social media): Must have weak peer effects\n")
+  cat("   • System design: Choose between high connectivity OR strong influence\n\n")
+  
+  cat("4. VISUAL CONFIRMATION: The graphs show:\n")
+  cat("   • Sparse networks (left side of curve) allow large δ values\n")
+  cat("   • Dense networks (right side of curve) require small δ values\n")
+  
+  return(network_results)
+}
+
+# Run main function
+if (interactive()) {
+  result <- main()
+} else {
+  result <- main()
+}
+
+
+
