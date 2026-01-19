@@ -6,7 +6,7 @@ Unlike conventional social network analysis—which typically relies on self-rep
 
 To implement our package, please load the R packages "MASS", “parallel”， “ggplot2"，“gridExtra”， “glmnet", "igraph" and "ivreg" before you running the codes.
 
-<img width="1776" height="514" alt="recovered influence networks illustration" src="https://github.com/user-attachments/assets/e2a3efb7-6525-44fe-a90d-34664f54a33f" />
+<img width="1734" height="506" alt="recovered behavioral influence networks" src="https://github.com/user-attachments/assets/12b02eec-17d7-471c-aae3-9368a00d5f19" />
 (Recovered bullying influence networks for nine schools by the SML algorithm.
 Each panel displays the bullying influence network recovered by Algorithm SML for one
 school. Nodes represent students; red circles denote bullies and blue squares denote nonbullies. Directed edges indicate estimated behavioral influence relations. Node size is
