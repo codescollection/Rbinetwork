@@ -44,6 +44,7 @@ install.packages(c("MASS", "parallel", "ggplot2", "gridExtra"))
 (3) Sufficient memory (≥ 8GB recommended for larger networks)
 
 📁 5. Project Structure
+
 ├── Network Generation Functions
 
 │   ├── generate_ER_network()      # Random networks
